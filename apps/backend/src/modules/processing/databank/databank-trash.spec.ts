@@ -17,6 +17,7 @@ function svcHarness() {
   const order: string[] = [];
   const mk = (label: string) => ({
     findFirst: jest.fn(async () => (order.push(`${label}.findFirst`), null)),
+    findFirstOrThrow: jest.fn(async (a: any) => (order.push(`${label}.findFirstOrThrow`), { id: a.where.id })),
     findMany: jest.fn(async () => (order.push(`${label}.findMany`), [])),
     update: jest.fn(async (a: any) => (order.push(`${label}.update`), { id: a.where.id, ...a.data })),
     updateMany: jest.fn(async () => (order.push(`${label}.updateMany`), { count: 1 })),
@@ -147,27 +148,41 @@ describe('DatabankService — restore', () => {
     expect(tx.databankFolder.update.mock.calls[0][0].data).toEqual({ parentFolderId: 'F1', name: 'Scans' });
   });
 
-  it('restoreFile with a trashed folder restores to the ROOT (no rename)', async () => {
-    const { svc, prisma } = svcHarness();
+  it('restoreFile takes the scope lock, restores to the ROOT when the folder is trashed (compare-and-set)', async () => {
+    const { svc, prisma, tx, order } = svcHarness();
     const file = { id: 'X1', clientId: null, ownerUserId: 'u1', folderId: 'F2', fileName: 'a.pdf', storageKey: 'k' };
     prisma.databankFile.findFirst.mockResolvedValueOnce(file); // loadTrashedFile
-    prisma.databankFolder.findFirst.mockResolvedValueOnce(null); // F2 is trashed → root
+    tx.databankFolder.findFirst.mockResolvedValueOnce(null); // F2 trashed under the lock → root
 
     await svc.restoreFile('X1', USER);
 
-    expect(prisma.databankFile.update.mock.calls[0][0]).toMatchObject({
-      where: { id: 'X1' },
+    // Runs under the per-scope folder lock, inside the transaction.
+    expect(order.indexOf('lock')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('lock')).toBeLessThan(order.indexOf('tx.file.updateMany'));
+    // Compare-and-set: only a still-trashed row is restored; folder cleared (root).
+    expect(tx.databankFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 'X1', deletedAt: { not: null } },
       data: { deletedAt: null, folderId: null },
     });
   });
 
-  it('restoreFile keeps the live folder when it still exists', async () => {
-    const { svc, prisma } = svcHarness();
+  it('restoreFile keeps the live folder when it still exists (re-checked under the lock)', async () => {
+    const { svc, prisma, tx } = svcHarness();
     const file = { id: 'X1', clientId: null, ownerUserId: 'u1', folderId: 'F2', fileName: 'a.pdf', storageKey: 'k' };
     prisma.databankFile.findFirst.mockResolvedValueOnce(file);
-    prisma.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F2' }); // F2 live
+    tx.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F2' }); // F2 live
     await svc.restoreFile('X1', USER);
-    expect(prisma.databankFile.update.mock.calls[0][0].data).toEqual({ deletedAt: null, folderId: 'F2' });
+    expect(tx.databankFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 'X1', deletedAt: { not: null } },
+      data: { deletedAt: null, folderId: 'F2' },
+    });
+  });
+
+  it('restoreFile 404s (not a 500) when the file was purged since the load', async () => {
+    const { svc, prisma, tx } = svcHarness();
+    prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'X1', clientId: null, ownerUserId: 'u1', folderId: null, storageKey: 'k' });
+    tx.databankFile.updateMany.mockResolvedValueOnce({ count: 0 }); // raced a purge
+    await expect(svc.restoreFile('X1', USER)).rejects.toThrow(NotFoundException);
   });
 });
 
@@ -202,22 +217,49 @@ describe('DatabankService — permanent purge', () => {
     expect(out).toEqual({ id: 'X1', purged: true });
   });
 
-  it('purgeFolder deletes file rows + folder rows THEN frees each captured key, in that order', async () => {
+  it('purgeFolder deletes only TRASHED rows THEN frees each deleted file key, in that order', async () => {
     const { svc, prisma, tx, storage, order } = svcHarness();
     prisma.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1' });
     tx.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1' }); // reload
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'F1' }, { id: 'F2' }]); // subtree
-    tx.databankFile.findMany.mockResolvedValueOnce([{ storageKey: 'k1' }, { storageKey: 'k2' }]);
+    tx.databankFile.findMany.mockResolvedValueOnce([
+      { id: 'A', storageKey: 'k1' },
+      { id: 'B', storageKey: 'k2' },
+    ]); // TRASHED files
 
     const out = await svc.purgeFolder('F1', USER);
 
-    expect(tx.databankFile.deleteMany).toHaveBeenCalledWith({ where: { folderId: { in: ['F1', 'F2'] } } });
-    expect(tx.databankFolder.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['F1', 'F2'] } } });
+    // Files deleted by ID (the trashed ones); folders guarded to trashed only.
+    expect(tx.databankFile.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['A', 'B'] } } });
+    expect(tx.databankFolder.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['F1', 'F2'] }, deletedAt: { not: null } },
+    });
+    // The trashed-file scan is filtered to deletedAt NOT null.
+    expect(tx.databankFile.findMany).toHaveBeenCalledWith({
+      where: { folderId: { in: ['F1', 'F2'] }, deletedAt: { not: null } },
+      select: { id: true, storageKey: true },
+    });
     // Rows gone BEFORE storage is freed.
     expect(order.indexOf('tx.file.deleteMany')).toBeLessThan(order.indexOf('storage.delete:k1'));
     expect(order.indexOf('tx.folder.deleteMany')).toBeLessThan(order.indexOf('storage.delete:k1'));
     expect(storage.delete.mock.calls).toEqual([['k1'], ['k2']]);
     expect(out).toEqual({ purgedFolders: 2, purgedFiles: 2 });
+  });
+
+  it('purgeFolder moves a stranded LIVE file to the root (never hard-deletes or frees it)', async () => {
+    const { svc, prisma, tx } = svcHarness();
+    prisma.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1' });
+    tx.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1' });
+    tx.$queryRaw.mockResolvedValueOnce([{ id: 'F1' }]);
+    tx.databankFile.findMany.mockResolvedValueOnce([]); // no trashed files under F1
+
+    await svc.purgeFolder('F1', USER);
+
+    // A LIVE file under the trashed folder is relocated to root before the cascade.
+    expect(tx.databankFile.updateMany).toHaveBeenCalledWith({
+      where: { folderId: { in: ['F1'] }, deletedAt: null },
+      data: { folderId: null },
+    });
   });
 
   it('a storage.delete failure does NOT throw out of a purge (the committed DB delete stands)', async () => {

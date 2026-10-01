@@ -164,21 +164,41 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
       });
       if (!batch.length) break;
       const ids = batch.map((f) => f.id);
+      // A LIVE file stranded under a trashed folder (a direct-upload commit that
+      // raced the delete) must survive the folder's FK cascade — move it to the
+      // root first.
+      // eslint-disable-next-line no-await-in-loop
+      await this.prisma.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: null },
+        data: { folderId: null },
+      });
+      // Only TRASHED files under these folders — never a live/restored one — and
+      // free storage only for files actually deleted (a file restored since the
+      // scan keeps both its row AND its bytes). Mirrors purgeAgedFiles.
       // eslint-disable-next-line no-await-in-loop
       const files = await this.prisma.databankFile.findMany({
-        where: { folderId: { in: ids } },
-        select: { storageKey: true },
+        where: { folderId: { in: ids }, deletedAt: { not: null } },
+        select: { id: true, storageKey: true },
       });
-      if (files.length) {
+      const fileIds = files.map((f) => f.id);
+      if (fileIds.length) {
         // eslint-disable-next-line no-await-in-loop
-        await this.prisma.databankFile.deleteMany({ where: { folderId: { in: ids } } });
+        await this.prisma.databankFile.deleteMany({ where: { id: { in: fileIds }, deletedAt: { not: null } } });
       }
       // eslint-disable-next-line no-await-in-loop
       const removed = await this.prisma.databankFolder.deleteMany({
         where: { id: { in: ids }, deletedAt: { not: null, lt: cutoff } },
       });
+      const survivors = fileIds.length
+        ? new Set(
+            // eslint-disable-next-line no-await-in-loop
+            (await this.prisma.databankFile.findMany({ where: { id: { in: fileIds } }, select: { id: true } })).map(
+              (s) => s.id,
+            ),
+          )
+        : new Set<string>();
       // eslint-disable-next-line no-await-in-loop
-      await this.freeStorage(files.map((f) => f.storageKey));
+      await this.freeStorage(files.filter((f) => !survivors.has(f.id)).map((f) => f.storageKey));
       purged += removed.count;
       if (batch.length < DatabankTrashSweeperService.BATCH) break;
     }

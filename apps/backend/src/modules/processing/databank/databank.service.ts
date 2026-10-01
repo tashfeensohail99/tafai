@@ -1555,27 +1555,33 @@ export class DatabankService {
   }
 
   /** Restore a TRASHED file to its folder if that folder is live, else the root.
-   *  Files allow duplicate names, so there is no rename. */
+   *  Files allow duplicate names, so there is no rename. Runs under the per-scope
+   *  folder lock — like restoreFolder/deleteFolder/purgeFolder — so the
+   *  destination's live/trashed state is stable (no resurrecting into a folder
+   *  being trashed, and no race with a purge freeing this file's bytes). A
+   *  compare-and-set on deletedAt means a file purged since the load is a 404, not
+   *  a 500. */
   async restoreFile(fileId: string, user: RequestUser) {
     const file = await this.loadTrashedFile(fileId, user);
-    let destination: string | null = null;
-    if (file.folderId) {
-      const folder = await this.prisma.databankFolder.findFirst({
-        where: {
-          id: file.folderId,
-          deletedAt: null,
-          clientId: file.clientId,
-          ownerUserId: file.ownerUserId,
-        },
-        select: { id: true },
+    const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
+    const id = await this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      let destination: string | null = null;
+      if (file.folderId) {
+        const folder = await tx.databankFolder.findFirst({
+          where: { id: file.folderId, deletedAt: null, clientId: file.clientId, ownerUserId: file.ownerUserId },
+          select: { id: true },
+        });
+        destination = folder?.id ?? null;
+      }
+      const res = await tx.databankFile.updateMany({
+        where: { id: file.id, deletedAt: { not: null } },
+        data: { deletedAt: null, folderId: destination },
       });
-      destination = folder?.id ?? null;
-    }
-    return this.prisma.databankFile.update({
-      where: { id: file.id },
-      data: { deletedAt: null, folderId: destination },
-      select: this.fileSelect,
-    });
+      if (res.count !== 1) throw new NotFoundException('File not found in trash');
+      return file.id;
+    }, FOLDER_TXN);
+    return this.prisma.databankFile.findFirstOrThrow({ where: { id }, select: this.fileSelect });
   }
 
   /**
@@ -1612,14 +1618,25 @@ export class DatabankService {
       await this.lockFolderScope(tx, scope);
       const folder = await this.reloadTrashedFolder(tx, folderId);
       const ids = await this.collectSubtreeWithTrashed(folder.id, tx);
-      const descendantFiles = await tx.databankFile.findMany({
-        where: { folderId: { in: ids } },
-        select: { storageKey: true },
+      // A LIVE file can sit under a trashed folder only if a direct-upload commit
+      // raced the delete (committed into a folder being trashed). The user purged
+      // a TRASHED folder — they never asked to destroy a live file — so move any
+      // such file to the root rather than let the folder delete FK-cascade it
+      // away. (restoreFile holds the same scope lock, so it can't add one here.)
+      await tx.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: null },
+        data: { folderId: null },
       });
-      // Files FIRST (FK folder → files), then the folder rows.
-      await tx.databankFile.deleteMany({ where: { folderId: { in: ids } } });
-      await tx.databankFolder.deleteMany({ where: { id: { in: ids } } });
-      return { storageKeys: descendantFiles.map((f) => f.storageKey), folderCount: ids.length };
+      // Only TRASHED rows are ever hard-deleted, and storage is freed only for the
+      // files this transaction actually removes.
+      const trashed = await tx.databankFile.findMany({
+        where: { folderId: { in: ids }, deletedAt: { not: null } },
+        select: { id: true, storageKey: true },
+      });
+      // Files FIRST (FK folder → files), then the trashed folder rows.
+      await tx.databankFile.deleteMany({ where: { id: { in: trashed.map((f) => f.id) } } });
+      await tx.databankFolder.deleteMany({ where: { id: { in: ids }, deletedAt: { not: null } } });
+      return { storageKeys: trashed.map((f) => f.storageKey), folderCount: ids.length };
     }, FOLDER_TXN);
     await this.freeStorage(storageKeys);
     return { purgedFolders: folderCount, purgedFiles: storageKeys.length };

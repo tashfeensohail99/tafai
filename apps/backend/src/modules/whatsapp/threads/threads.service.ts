@@ -777,20 +777,17 @@ export class WhatsAppThreadsService {
     string,
     { expires: number; promise: ReturnType<WhatsAppThreadsService['computeStats']> }
   >();
-  // 60s: badge counts don't need per-second accuracy, and each miss now runs a
-  // single scan (see computeStats). A longer TTL further thins the synchronized
-  // peak-hour bursts that drove the "CRM is slow" reports.
-  private static readonly STATS_TTL_MS = 60_000;
+  // 5 min: badge counts are intentionally approximate, and each miss runs a
+  // single scan (see computeStats). A longer TTL — together with the
+  // stale-while-revalidate below — thins the synchronized peak-hour bursts that
+  // drove the "CRM is slow" reports: each scope is scanned at most once per
+  // window, and never in the request path once it has been computed once.
+  private static readonly STATS_TTL_MS = 300_000;
 
   async stats(
     caller: CallerContext,
     platform?: ChannelPlatform,
   ): ReturnType<WhatsAppThreadsService['computeStats']> {
-    // Key = everything computeStats' output depends on: the scope branch it
-    // takes + the employee whose assigned-set/slaScore it computes. userId is
-    // deliberately NOT in the key (stats read nothing else user-specific), so
-    // e.g. all view-all admins share one entry — the heaviest computation runs
-    // once per TTL for the whole admin console.
     const scope = caller.canViewAll
       ? 'all'
       : caller.canViewFinanceScope
@@ -798,21 +795,42 @@ export class WhatsAppThreadsService {
         : caller.canViewProcessingScope
           ? 'proc'
           : 'emp';
-    const key = `${scope}:${caller.employeeId ?? 'none'}:${platform ?? 'all'}`;
+    // The 'all' (view-all admin/manager) result is employee-INDEPENDENT — org-wide
+    // counts + the org SLA score — so EVERY view-all caller shares ONE entry and
+    // the heaviest, most-opened scope is scanned once per window instead of once
+    // per admin. The other scopes depend on the caller's own assigned set /
+    // personal SLA score, so they still key by employeeId.
+    const key =
+      scope === 'all'
+        ? `all:${platform ?? 'all'}`
+        : `${scope}:${caller.employeeId ?? 'none'}:${platform ?? 'all'}`;
     const now = Date.now();
     const hit = this.statsCache.get(key);
-    if (hit && hit.expires > now) return hit.promise;
+    if (hit && hit.expires > now) return hit.promise; // fresh — shared across the scope
     // Opportunistic prune so the map stays bounded (one entry per active scope).
     if (this.statsCache.size > 300) {
       for (const [k, v] of this.statsCache) if (v.expires <= now) this.statsCache.delete(k);
     }
-    const promise = this.computeStats(caller, platform).catch((err) => {
-      // Never cache a failure — drop the entry so the next caller retries.
-      this.statsCache.delete(key);
-      throw err;
-    });
-    this.statsCache.set(key, { expires: now + WhatsAppThreadsService.STATS_TTL_MS, promise });
-    return promise;
+    const refresh = (): ReturnType<WhatsAppThreadsService['computeStats']> => {
+      const promise = this.computeStats(caller, platform).catch((err) => {
+        // Never cache a failure — but only drop if THIS is still the live entry
+        // (a newer refresh may already have replaced it).
+        const cur = this.statsCache.get(key);
+        if (cur && cur.promise === promise) this.statsCache.delete(key);
+        throw err;
+      });
+      this.statsCache.set(key, { expires: Date.now() + WhatsAppThreadsService.STATS_TTL_MS, promise });
+      return promise;
+    };
+    // Stale-while-revalidate: when a prior (now-expired) value exists, serve it
+    // INSTANTLY and recompute in the background, so opening the inbox never blocks
+    // on the 150-370ms badge scan. Only a truly cold scope (nothing cached yet)
+    // awaits the scan.
+    if (hit) {
+      void refresh().catch(() => undefined); // stale value already returned
+      return hit.promise;
+    }
+    return refresh();
   }
 
   private async computeStats(caller: CallerContext, platform?: ChannelPlatform): Promise<{

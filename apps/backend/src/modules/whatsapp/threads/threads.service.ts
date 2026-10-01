@@ -163,6 +163,30 @@ const THREAD_LIST_INCLUDE = {
 } satisfies Prisma.WhatsAppThreadInclude;
 
 /**
+ * List rows carry `adReferral` ONLY for the tiny "From ad: <headline>" chip, but
+ * the column stores Meta's FULL referral blob (~1.3KB avg, on ~74% of threads) —
+ * it was most of the list payload (~2.8KB/row → 85–280KB per page) and of the
+ * cross-region DB→backend row transfer. Project it down to the two fields the
+ * list UIs actually read (web sales + admin rows; mobile ignores it entirely).
+ * The FULL blob still ships from getOrFail(:id), which the chat panel's ad card
+ * uses. Applied EVERYWHERE a list-shaped row is produced (list main + pinned
+ * section + getListItem) so the realtime patch-one-row path keeps an identical
+ * shape.
+ */
+function trimListRow<T extends { adReferral: Prisma.JsonValue | null }>(row: T): T {
+  const ref = row.adReferral;
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return row;
+  const r = ref as Record<string, unknown>;
+  return {
+    ...row,
+    adReferral: {
+      headline: typeof r.headline === 'string' ? r.headline : null,
+      media_type: typeof r.media_type === 'string' ? r.media_type : null,
+    } as Prisma.JsonValue,
+  };
+}
+
+/**
  * Null-safe "this thread's lead is NOT dispositioned JUNK/DEAD" filter.
  *
  * A plain `NOT { lead: { is: { disposition: { in: [JUNK, DEAD] } } } }` is
@@ -501,9 +525,9 @@ export class WhatsAppThreadsService {
     }
 
     const items = [
-      ...pinnedRows.map((r) => ({ ...r, isPinnedByMe: true })),
+      ...pinnedRows.map((r) => ({ ...trimListRow(r), isPinnedByMe: true })),
       // Main rows are already pin-excluded, so isPinnedByMe is always false.
-      ...pageRows.map((r) => ({ ...r, isPinnedByMe: false })),
+      ...pageRows.map((r) => ({ ...trimListRow(r), isPinnedByMe: false })),
     ];
 
     return {
@@ -601,7 +625,7 @@ export class WhatsAppThreadsService {
       });
       isPinnedByMe = !!pin;
     }
-    return { ...row, isPinnedByMe };
+    return { ...trimListRow(row), isPinnedByMe };
   }
 
   /**

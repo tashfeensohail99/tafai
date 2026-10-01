@@ -4592,6 +4592,13 @@ model WhatsAppThread {
   @@index([awaitingReply, lastMessageAt(sort: Desc)])
   // Unread counter feeds the stats "unread" count and the inbox badge filter.
   @@index([unreadCount])
+  // Serves list()'s DEFAULT ORDER BY (awaitingReply DESC, lastHumanActivityAt
+  // DESC NULLS LAST, lastMessageAt DESC NULLS LAST, createdAt DESC, id DESC) as
+  // a top-N index walk instead of sorting all threads. NOTE: Prisma can't
+  // express NULLS LAST here — the hand-written migration's SQL (which adds it on
+  // the two nullable timestamps) is the authoritative definition; this entry
+  // keeps the index named/tracked in the schema.
+  @@index([awaitingReply(sort: Desc), lastHumanActivityAt(sort: Desc), lastMessageAt(sort: Desc), createdAt(sort: Desc), id(sort: Desc)], map: "threads_inbox_order_idx")
   @@map("threads")
   @@schema("whatsapp")
 }

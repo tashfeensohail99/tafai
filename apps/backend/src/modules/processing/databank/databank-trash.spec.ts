@@ -19,6 +19,7 @@ function svcHarness() {
     findFirst: jest.fn(async () => (order.push(`${label}.findFirst`), null)),
     findFirstOrThrow: jest.fn(async (a: any) => (order.push(`${label}.findFirstOrThrow`), { id: a.where.id })),
     findMany: jest.fn(async () => (order.push(`${label}.findMany`), [])),
+    create: jest.fn(async (a: any) => (order.push(`${label}.create`), { id: 'new', ...a.data })),
     update: jest.fn(async (a: any) => (order.push(`${label}.update`), { id: a.where.id, ...a.data })),
     updateMany: jest.fn(async () => (order.push(`${label}.updateMany`), { count: 1 })),
     deleteMany: jest.fn(async () => (order.push(`${label}.deleteMany`), { count: 1 })),
@@ -94,6 +95,69 @@ describe('DatabankService — trash listing', () => {
     const { svc } = svcHarness();
     await expect(svc.listTrash(USER, { clientId: 'c1', personal: true })).rejects.toThrow('not both');
     await expect(svc.listTrash(USER, {})).rejects.toThrow('Provide either');
+  });
+});
+
+describe('DatabankService — move/copy serialize vs a concurrent trash', () => {
+  it('moveFile takes FOR SHARE on a LIVE destination and reparents the file THERE', async () => {
+    const { svc, prisma, tx, order } = svcHarness();
+    prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1', folderId: null });
+    (svc as any).assertFolderInScope = jest.fn(async () => 'X');
+    tx.$queryRaw.mockResolvedValueOnce([{ id: 'X' }]); // destination live + now share-locked
+
+    await svc.moveFile('F1', 'X', USER);
+
+    // The reparent runs inside the txn, gated by the FOR SHARE probe on the folder.
+    expect(order).toContain('txn');
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1); // the FOR SHARE probe
+    expect(tx.databankFile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'F1' }, data: { folderId: 'X' } }),
+    );
+  });
+
+  it('moveFile relocates to the ROOT when the destination was trashed since the scope check (FOR SHARE empty)', async () => {
+    const { svc, prisma, tx } = svcHarness();
+    prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'F1', clientId: null, ownerUserId: 'u1', folderId: null });
+    (svc as any).assertFolderInScope = jest.fn(async () => 'X');
+    tx.$queryRaw.mockResolvedValueOnce([]); // destination trashed/gone under the lock
+
+    await svc.moveFile('F1', 'X', USER);
+
+    expect(tx.databankFile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { folderId: null } }), // never stranded inside the trashed folder
+    );
+  });
+
+  it('copyFile takes FOR SHARE on a LIVE destination and creates the copy THERE', async () => {
+    const { svc, prisma, tx, storage } = svcHarness();
+    prisma.databankFile.findFirst.mockResolvedValueOnce({
+      id: 'S1', clientId: null, ownerUserId: 'u1', folderId: null, storageKey: 'src', fileName: 'a.pdf', mimeType: 'application/pdf', fileSizeBytes: 10, sha256: 'h',
+    });
+    (svc as any).assertFolderInScope = jest.fn(async () => 'X');
+    (storage as any).copyObject = jest.fn(async () => ({ key: 'copykey', sizeBytes: 10 }));
+    tx.$queryRaw.mockResolvedValueOnce([{ id: 'X' }]); // destination live + share-locked
+
+    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER);
+
+    expect(tx.databankFile.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ folderId: 'X', storageKey: 'copykey' }) }),
+    );
+  });
+
+  it('copyFile relocates the new copy to the ROOT when the destination was trashed meanwhile', async () => {
+    const { svc, prisma, tx, storage } = svcHarness();
+    prisma.databankFile.findFirst.mockResolvedValueOnce({
+      id: 'S1', clientId: null, ownerUserId: 'u1', folderId: null, storageKey: 'src', fileName: 'a.pdf', mimeType: 'application/pdf', fileSizeBytes: 10, sha256: 'h',
+    });
+    (svc as any).assertFolderInScope = jest.fn(async () => 'X');
+    (storage as any).copyObject = jest.fn(async () => ({ key: 'copykey', sizeBytes: 10 }));
+    tx.$queryRaw.mockResolvedValueOnce([]); // destination trashed/gone under the lock
+
+    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER);
+
+    expect(tx.databankFile.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ folderId: null, storageKey: 'copykey' }) }),
+    );
   });
 });
 
@@ -340,11 +404,13 @@ describe('DatabankTrashSweeperService', () => {
       await h.sweeper.sweep(NOW);
 
       const cutoff = new Date(NOW.getTime() - 30 * DAY);
+      const notUnderTrashed = { OR: [{ folderId: null }, { folder: { deletedAt: null } }] };
       expect(h.prisma.databankFile.findMany.mock.calls[0][0].where).toEqual({
         deletedAt: { not: null, lt: cutoff },
+        ...notUnderTrashed,
       });
       expect(h.prisma.databankFile.deleteMany).toHaveBeenCalledWith({
-        where: { id: { in: ['a'] }, deletedAt: { not: null, lt: cutoff } },
+        where: { id: { in: ['a'] }, deletedAt: { not: null, lt: cutoff }, ...notUnderTrashed },
       });
       expect(h.storage.delete).toHaveBeenCalledWith('ka');
       // Folder phase also scoped to the same cutoff.

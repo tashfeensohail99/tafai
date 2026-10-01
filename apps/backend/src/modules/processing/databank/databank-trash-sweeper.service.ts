@@ -115,23 +115,33 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
   }
 
   /** Free + hard-delete trashed files older than `cutoff`, oldest first, in
-   *  batches until drained or the budget runs out. */
+   *  batches until drained or the budget runs out. A file nested under a
+   *  still-trashed folder is SKIPPED here — it shares that folder's retention
+   *  clock and is cascaded + freed by purgeAgedFolders when the folder itself
+   *  ages. Otherwise a file trashed individually BEFORE its folder (an OLDER
+   *  deletedAt) would be reaped ahead of the still-restorable folder, silently
+   *  losing it from a later restoreFolder (which restores the whole subtree as a
+   *  unit). Only root files and files under a LIVE folder age on their own clock. */
   private async purgeAgedFiles(cutoff: Date, deadline: number): Promise<number> {
     let purged = 0;
+    // folderId NULL (root) OR the folder is live — never a trashed folder.
+    const notUnderTrashedFolder = { OR: [{ folderId: null }, { folder: { deletedAt: null } }] };
     while (this.clock() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       const batch = await this.prisma.databankFile.findMany({
-        where: { deletedAt: { not: null, lt: cutoff } },
+        where: { deletedAt: { not: null, lt: cutoff }, ...notUnderTrashedFolder },
         orderBy: { deletedAt: 'asc' },
         take: DatabankTrashSweeperService.BATCH,
         select: { id: true, storageKey: true },
       });
       if (!batch.length) break;
       const ids = batch.map((f) => f.id);
-      // Compare-and-set on deletedAt — a file restored since the scan is excluded.
+      // Compare-and-set on deletedAt AND re-check the folder: a file restored, or
+      // newly nested under a folder trashed since the scan, is excluded (it then
+      // ages with that folder).
       // eslint-disable-next-line no-await-in-loop
       await this.prisma.databankFile.deleteMany({
-        where: { id: { in: ids }, deletedAt: { not: null, lt: cutoff } },
+        where: { id: { in: ids }, deletedAt: { not: null, lt: cutoff }, ...notUnderTrashedFolder },
       });
       // Free storage ONLY for rows that are truly gone — a restored file (now
       // reparented to a live folder) survives the guarded delete and keeps its bytes.

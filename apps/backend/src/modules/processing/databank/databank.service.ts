@@ -1347,15 +1347,21 @@ export class DatabankService {
 
   async moveFile(fileId: string, folderId: string | null | undefined, user: RequestUser) {
     const file = await this.loadFile(fileId, user);
-    const targetFolder = await this.assertFolderInScope(folderId, {
-      clientId: file.clientId,
-      ownerUserId: file.ownerUserId,
-    });
-    return this.prisma.databankFile.update({
-      where: { id: file.id },
-      data: { folderId: targetFolder },
-      select: this.fileSelect,
-    });
+    const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
+    const targetFolder = await this.assertFolderInScope(folderId, scope);
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize against a concurrent subtree delete/purge of the destination
+      // (see lockLiveDestinationFolder): a move is a 4th path that reparents a
+      // LIVE file into a folder, so without this it could strand the file inside
+      // a folder being trashed — and the sweeper's FK cascade would then destroy
+      // the live row. Relocate to the root if the folder was trashed meanwhile.
+      const dest = await this.lockLiveDestinationFolder(tx, targetFolder, scope);
+      return tx.databankFile.update({
+        where: { id: file.id },
+        data: { folderId: dest },
+        select: this.fileSelect,
+      });
+    }, FOLDER_TXN);
   }
 
   /**
@@ -1408,22 +1414,30 @@ export class DatabankService {
       source.fileName,
     );
 
-    return this.prisma.databankFile.create({
-      data: {
-        clientId: targetClientId,
-        ownerUserId: targetOwnerUserId,
-        folderId: targetFolder,
-        fileName: source.fileName,
-        storageKey: uploaded.key,
-        mimeType: source.mimeType,
-        fileSizeBytes: source.fileSizeBytes,
-        sha256: source.sha256, // same bytes → same hash (duplicate detection)
-        source: DatabankFileSource.COPIED,
-        copiedFromFileId: source.id,
-        uploadedByUserId: user.id,
-      },
-      select: this.fileSelect,
-    });
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize against a concurrent subtree delete/purge of the destination
+      // (see lockLiveDestinationFolder). The slow server-side copyObject above
+      // widens the window in which the folder could be trashed, so without this
+      // the live copy could be stranded inside a trashed folder and later
+      // destroyed by the sweeper's FK cascade. Land at the root if so.
+      const dest = await this.lockLiveDestinationFolder(tx, targetFolder, scope);
+      return tx.databankFile.create({
+        data: {
+          clientId: targetClientId,
+          ownerUserId: targetOwnerUserId,
+          folderId: dest,
+          fileName: source.fileName,
+          storageKey: uploaded.key,
+          mimeType: source.mimeType,
+          fileSizeBytes: source.fileSizeBytes,
+          sha256: source.sha256, // same bytes → same hash (duplicate detection)
+          source: DatabankFileSource.COPIED,
+          copiedFromFileId: source.id,
+          uploadedByUserId: user.id,
+        },
+        select: this.fileSelect,
+      });
+    }, FOLDER_TXN);
   }
 
   /** Soft-delete a single file (recoverable; the object stays in storage). */

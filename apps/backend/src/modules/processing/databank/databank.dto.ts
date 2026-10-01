@@ -236,3 +236,22 @@ export class SearchDatabankDto {
   @Min(1)
   pageSize?: number;
 }
+
+/**
+ * GET {base}/databank/trash — the TOP-LEVEL trashed items in ONE scope (Databank
+ * P3). Scope is EITHER `clientId` OR `personal: true` — exactly one, enforced in
+ * the service. Query-string values, so `personal` is coerced like SearchDatabankDto;
+ * forbidNonWhitelisted means only these two fields are accepted.
+ */
+export class TrashQueryDto {
+  /** Client-scoped trash. Omit when `personal` is set. */
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  /** The caller's personal databank trash instead of a client's. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  personal?: boolean;
+}

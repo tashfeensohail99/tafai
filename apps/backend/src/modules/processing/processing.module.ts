@@ -14,6 +14,7 @@ import { JrDatabankController } from './databank/jr-databank.controller';
 import { DatabankService } from './databank/databank.service';
 import { DatabankUploadService } from './databank/databank-upload.service';
 import { DatabankUploadSweeperService } from './databank/databank-upload-sweeper.service';
+import { DatabankTrashSweeperService } from './databank/databank-trash-sweeper.service';
 import { DOC_AI_QUEUE } from './document-ai/document-ai.contracts';
 import { DocumentParserClient } from './document-ai/document-parser.client';
 import { DocumentAiService } from './document-ai/document-ai.service';
@@ -52,6 +53,7 @@ import { ClientNudgeService } from './client-nudge.service';
     DatabankService,
     DatabankUploadService,
     DatabankUploadSweeperService,
+    DatabankTrashSweeperService,
     DocumentParserClient,
     DocumentAiService,
     DocAiProcessor,

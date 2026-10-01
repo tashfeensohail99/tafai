@@ -187,6 +187,60 @@ export class CommitUploadDto extends PresignUploadDto {
 }
 
 /**
+ * Databank P3-2 file versioning. A new VERSION of an EXISTING file (same
+ * direct-to-R2 flow as a first upload, minus the scope — the scope is the file's
+ * own). The browser presigns a PUT into the file's scope folder, uploads the
+ * bytes straight to R2, then commits.
+ */
+export class PresignVersionDto {
+  @IsString()
+  @MaxLength(255)
+  mimeType!: string;
+
+  @IsInt()
+  @Min(0)
+  fileSizeBytes!: number;
+
+  /** Optional name — only drives the object key's extension; defaults to the
+   *  file's current name. The file's own fileName is unchanged by a new version. */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  fileName?: string;
+}
+
+/** Commit a completed version upload: the `storageKey` the presign returned plus
+ *  the new bytes' metadata. `sha256` gates a no-op re-upload of the CURRENT bytes. */
+export class CommitVersionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(512)
+  storageKey!: string;
+
+  @IsString()
+  @MaxLength(255)
+  mimeType!: string;
+
+  @IsInt()
+  @Min(0)
+  fileSizeBytes!: number;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  sha256!: string;
+}
+
+/** PATCH a version's human label ("Signed final"). */
+export class RenameVersionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  name!: string;
+}
+
+/**
  * GET processing/databank/search — full-text/fuzzy file search with server-side
  * pagination and type facets (Databank P2). All fields arrive as query-string
  * values, so booleans/numbers are coerced (the global ValidationPipe runs with

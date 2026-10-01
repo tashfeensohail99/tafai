@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  PreconditionFailedException,
 } from '@nestjs/common';
 import { DatabankFileSource, Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -13,10 +15,12 @@ import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
 import {
   CommitUploadDto,
+  CommitVersionDto,
   CopyFileDto,
   CreateFolderDto,
   EnsureFolderPathsDto,
   PresignUploadDto,
+  PresignVersionDto,
   UpdateFileDto,
 } from './databank.dto';
 import { FolderPathError, FolderPlan, planFolderPaths, splitFolderPath } from './folder-paths';
@@ -820,6 +824,19 @@ export class DatabankService {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194033, hashtext(${key}))`;
   }
 
+  // PER-FILE VERSION LOCK (P3-2). Every version-list mutation (new version /
+  // restore / delete / rename) takes this advisory lock so version numbering and
+  // the currentVersionId repoint are race-free. 1145194037 ('DBF5') is a NEW
+  // two-key namespace, DISTINCT from 1145194033 (folder structure), 1145194035
+  // (upload init-race) and the single-key hashtext() space the resumable commit
+  // uses — so a 32-bit hash collision can never make this lock wait on an
+  // unrelated one. It is taken ALONGSIDE a SELECT … FOR UPDATE on the file row
+  // (inside the same txn), which serialises version ops against a concurrent
+  // deleteFile / purge (those take the row FOR UPDATE / delete it too).
+  private async lockFileVersions(tx: Prisma.TransactionClient, fileId: string): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194037, hashtext(${fileId}))`;
+  }
+
   /**
    * Serialize a file INSERT against a concurrent subtree delete / purge of its
    * destination folder, so no LIVE file is ever stranded inside a trashed (or
@@ -1063,6 +1080,59 @@ export class DatabankService {
   }
 
   /**
+   * The committed-key guard, shared by the direct-upload commit and the version
+   * commit. The key must be EXACTLY what presign issues for `scope` —
+   * "<storageFolder>/<uuid>.<ext>", one path segment — so no "..", no extra
+   * segments, no other client's / associate's prefix. It also must NOT belong to
+   * a resumable upload session (those have the same shape but are recorded ONLY
+   * by that path, after full verification). Throws ForbiddenException otherwise.
+   */
+  private async assertCommittableKey(
+    storageKey: string,
+    scope: { storageFolder: string },
+  ): Promise<void> {
+    const folderRe = scope.storageFolder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keyShape = new RegExp(`^${folderRe}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[^/]*$`);
+    if (!keyShape.test(storageKey)) {
+      throw new ForbiddenException('This upload key does not belong to the target databank.');
+    }
+    const sessionOwned = await this.prisma.databankUpload.findUnique({
+      where: { storageKey },
+      select: { id: true },
+    });
+    if (sessionOwned) {
+      throw new ForbiddenException('This upload key belongs to a resumable upload.');
+    }
+  }
+
+  /**
+   * HEAD a freshly-PUT object to prove it landed and capture its true size, then
+   * enforce the single-PUT cap. A presigned PUT can't enforce size (R2 has no
+   * POST policy), so a caller that skips the UI guard can store up to R2's 5 GiB
+   * single-PUT limit — check the REAL stored size: absent → 400 (retry), over
+   * cap → remove the object (best-effort) + 400. Returns the head meta so the
+   * caller stores the true size. Shared by the direct-upload commit and the
+   * version commit.
+   */
+  private async headWithinCap(storageKey: string) {
+    const head = await this.storage.headObjectMeta(storageKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'The upload was not found in storage — it may not have finished. Please retry.',
+      );
+    }
+    if ((head.sizeBytes ?? 0) > DatabankService.DIRECT_MAX_BYTES) {
+      await this.storage.delete(storageKey).catch(() => undefined);
+      throw new BadRequestException(
+        `File is larger than the ${Math.round(
+          DatabankService.DIRECT_MAX_BYTES / (1024 * 1024 * 1024),
+        )} GB per-file upload limit.`,
+      );
+    }
+    return head;
+  }
+
+  /**
    * Step 2 of a direct upload: the browser finished PUTting to `storageKey`, so
    * record the DatabankFile row. Re-authorizes the write, confirms the key
    * belongs to THIS scope's storage folder (a caller can't commit an arbitrary
@@ -1072,23 +1142,9 @@ export class DatabankService {
   async commitDirectUpload(dto: CommitUploadDto, user: RequestUser, targetUserId?: string) {
     this.assertSafeFileName(dto.fileName);
     const scope = await this.resolveWriteScope(dto, user, targetUserId);
-    // The key must be EXACTLY what presign issues for this scope —
-    // "<storageFolder>/<uuid>.<ext>", one path segment — so no "..", no extra
-    // segments, no other client's / associate's prefix.
-    const folderRe = scope.storageFolder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const keyShape = new RegExp(`^${folderRe}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[^/]*$`);
-    if (!keyShape.test(dto.storageKey)) {
-      throw new ForbiddenException('This upload key does not belong to the target databank.');
-    }
-    // Keys of resumable upload sessions have the same shape, but they are
-    // recorded ONLY by that path, after full verification — never here.
-    const sessionOwned = await this.prisma.databankUpload.findUnique({
-      where: { storageKey: dto.storageKey },
-      select: { id: true },
-    });
-    if (sessionOwned) {
-      throw new ForbiddenException('This upload key belongs to a resumable upload.');
-    }
+    // The key must be EXACTLY what presign issues for this scope, and must not
+    // belong to a resumable upload session (factored out — see assertCommittableKey).
+    await this.assertCommittableKey(dto.storageKey, scope);
     // A key backs at most ONE file row. A retried commit (the first response was
     // lost) gets the row it already created instead of a duplicate; any other
     // reuse is refused — and never reaches the size-check delete below, so an
@@ -1108,25 +1164,9 @@ export class DatabankService {
       }
       throw new BadRequestException('This upload has already been used.');
     }
-    const head = await this.storage.headObjectMeta(dto.storageKey);
-    if (!head.exists) {
-      throw new BadRequestException(
-        'The upload was not found in storage — it may not have finished. Please retry.',
-      );
-    }
-    // A presigned PUT can't enforce size (R2 has no POST policy), so a caller
-    // that skips the UI guard can store up to R2's 5 GiB single-PUT limit.
-    // Check the REAL stored size against this path's cap: over it, remove the
-    // object (best-effort) and reject cleanly rather than keep an oversized,
-    // non-resumable upload.
-    if ((head.sizeBytes ?? 0) > DatabankService.DIRECT_MAX_BYTES) {
-      await this.storage.delete(dto.storageKey).catch(() => undefined);
-      throw new BadRequestException(
-        `File is larger than the ${Math.round(
-          DatabankService.DIRECT_MAX_BYTES / (1024 * 1024 * 1024),
-        )} GB per-file upload limit.`,
-      );
-    }
+    // Prove the object landed, capture its true size and enforce the single-PUT
+    // cap (factored out — see headWithinCap).
+    const head = await this.headWithinCap(dto.storageKey);
     const targetFolder = await this.assertFolderInScope(dto.folderId, {
       clientId: scope.clientId,
       ownerUserId: scope.ownerUserId,
@@ -1664,13 +1704,24 @@ export class DatabankService {
    */
   async purgeFile(fileId: string, user: RequestUser) {
     const file = await this.loadTrashedFile(fileId, user);
-    await this.prisma.$transaction(async (tx) => {
+    const versionKeys = await this.prisma.$transaction(async (tx) => {
+      // Capture this file's version keys BEFORE the delete: the FK
+      // version.fileId → file ON DELETE CASCADE removes the version rows without
+      // freeing their objects (P3-2 lifecycle invariant).
+      const versions = await tx.databankFileVersion.findMany({
+        where: { fileId: file.id },
+        select: { storageKey: true },
+      });
       const res = await tx.databankFile.deleteMany({
         where: { id: file.id, deletedAt: { not: null } },
       });
       if (res.count !== 1) throw new NotFoundException('File not found in trash');
+      return versions.map((v) => v.storageKey);
     });
-    await this.freeStorage([file.storageKey]);
+    // Free the DEDUPED set {file.storageKey} ∪ {version keys}. Once v1 is
+    // materialised the current object lives in both the mirror and its version
+    // row — dedupe frees it exactly once; every historical object frees once.
+    await this.freeStorage(this.dedupeKeys([file.storageKey, ...versionKeys]));
     return { id: file.id, purged: true };
   }
 
@@ -1685,7 +1736,7 @@ export class DatabankService {
   async purgeFolder(folderId: string, user: RequestUser) {
     const authorized = await this.loadTrashedFolder(folderId, user);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
-    const { storageKeys, folderCount } = await this.prisma.$transaction(async (tx) => {
+    const { freeKeys, folderCount, fileCount } = await this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
       const folder = await this.reloadTrashedFolder(tx, folderId);
       const ids = await this.collectSubtreeWithTrashed(folder.id, tx);
@@ -1707,13 +1758,28 @@ export class DatabankService {
         where: { folderId: { in: ids }, deletedAt: { not: null } },
         select: { id: true, storageKey: true },
       });
+      const trashedIds = trashed.map((f) => f.id);
+      // Capture the TRASHED files' version keys BEFORE the delete — the FK
+      // version.fileId → file cascade removes version rows without freeing objects.
+      const versions = trashedIds.length
+        ? await tx.databankFileVersion.findMany({
+            where: { fileId: { in: trashedIds } },
+            select: { storageKey: true },
+          })
+        : [];
       // Files FIRST (FK folder → files), then the trashed folder rows.
-      await tx.databankFile.deleteMany({ where: { id: { in: trashed.map((f) => f.id) } } });
+      await tx.databankFile.deleteMany({ where: { id: { in: trashedIds } } });
       await tx.databankFolder.deleteMany({ where: { id: { in: ids }, deletedAt: { not: null } } });
-      return { storageKeys: trashed.map((f) => f.storageKey), folderCount: ids.length };
+      return {
+        // Free the DEDUPED union {file keys} ∪ {version keys}; each file's keys
+        // are unique to it, so dedupe only collapses the current-object twin.
+        freeKeys: this.dedupeKeys([...trashed.map((f) => f.storageKey), ...versions.map((v) => v.storageKey)]),
+        folderCount: ids.length,
+        fileCount: trashed.length,
+      };
     }, FOLDER_TXN);
-    await this.freeStorage(storageKeys);
-    return { purgedFolders: folderCount, purgedFiles: storageKeys.length };
+    await this.freeStorage(freeKeys);
+    return { purgedFolders: folderCount, purgedFiles: fileCount };
   }
 
   /** Free storage objects best-effort, AFTER their rows are gone — a failure is
@@ -1730,6 +1796,422 @@ export class DatabankService {
     }
   }
 
+  /** De-duplicate a set of storage keys (dropping empties) so the P3-2 "free the
+   *  deduped set {file.storageKey} ∪ {version keys}" rule frees each object
+   *  EXACTLY once: the current object is mirrored on the file AND owned by its
+   *  materialised current-version row, so without this it would be freed twice. */
+  private dedupeKeys(keys: (string | null | undefined)[]): string[] {
+    return [...new Set(keys.filter((k): k is string => !!k))];
+  }
+
+  // ---------------------------------------------------------------------------
+  // File versions (Databank P3-2). A file keeps a history of its bytes. Every
+  // stored object is owned by exactly ONE DatabankFileVersion row; the file's
+  // mirror columns are a denormalised read-cache of the current version. Existing
+  // files are "implicit v1" (currentVersionId NULL, no version rows) — the first
+  // commitNewVersion lazily materialises v1, so there is NO data backfill. Every
+  // mutation runs under the per-file advisory lock (lockFileVersions) + a
+  // SELECT … FOR UPDATE on the file, and bumps versionSeq (the ETag) via a
+  // guarded compare-and-set (If-Match → 412).
+  // ---------------------------------------------------------------------------
+
+  /** The scope + storage folder a file's objects live under (its OWN scope). */
+  private fileScope(file: { clientId: string | null; ownerUserId: string | null }): {
+    clientId: string | null;
+    ownerUserId: string | null;
+    storageFolder: string;
+  } {
+    return file.clientId
+      ? { clientId: file.clientId, ownerUserId: null, storageFolder: `databank/clients/${file.clientId}` }
+      : { clientId: null, ownerUserId: file.ownerUserId, storageFolder: `databank/users/${file.ownerUserId}` };
+  }
+
+  /** Parse an `If-Match` header into the expected versionSeq, or undefined when no
+   *  precondition was sent. Accepts a weak/strong ETag (`W/"5"`, `"5"`) or a bare
+   *  number; a value with no digits yields undefined (treated as no precondition). */
+  private parseIfMatch(ifMatch?: string | null): number | undefined {
+    if (ifMatch === undefined || ifMatch === null) return undefined;
+    const m = String(ifMatch).match(/\d+/);
+    if (!m) return undefined;
+    const n = Number(m[0]);
+    return Number.isInteger(n) ? n : undefined;
+  }
+
+  /**
+   * Step 1 of a new-version upload: presign a PUT into the file's OWN scope folder.
+   * `loadFile` 404s a missing/trashed file (can't version a trashed file) and
+   * authorizes a WRITE. Same single-PUT cap + name rules as the direct upload.
+   * Returns the same shape as presignDirectUpload ({ strategy, storageKey, url?,
+   * headers?, maxBytes }).
+   */
+  async presignNewVersion(fileId: string, dto: PresignVersionDto, user: RequestUser) {
+    const file = await this.loadFile(fileId, user);
+    const name = dto.fileName ?? file.fileName;
+    this.assertSafeFileName(name);
+    if (dto.fileSizeBytes > DatabankService.DIRECT_MAX_BYTES) {
+      throw new BadRequestException(
+        `File is larger than the ${Math.round(
+          DatabankService.DIRECT_MAX_BYTES / (1024 * 1024 * 1024),
+        )} GB per-file upload limit.`,
+      );
+    }
+    const scope = this.fileScope(file);
+    const presigned = await this.storage.presignPutUrl(scope.storageFolder, dto.mimeType, name);
+    return { ...presigned, maxBytes: DatabankService.DIRECT_MAX_BYTES };
+  }
+
+  /**
+   * Step 2 of a new-version upload: the browser finished PUTting to `dto.storageKey`,
+   * so record a new current version. Materialises the implicit v1 on first use.
+   * Frees NOTHING on success (the new object is owned by the new version, the
+   * prior current by its materialised history row). A sha256 match vs the CURRENT
+   * version is a no-op (the redundant object is deleted). See the design doc.
+   */
+  async commitNewVersion(fileId: string, dto: CommitVersionDto, user: RequestUser, ifMatch?: string) {
+    const file = await this.loadFile(fileId, user);
+    const scope = this.fileScope(file);
+    await this.assertCommittableKey(dto.storageKey, scope);
+
+    // Version-aware idempotency FIRST. This exact key already a version row of
+    // THIS file → a prior commit succeeded and its reply was lost: return the file
+    // unchanged (the object is referenced — free nothing). Any OTHER file's version
+    // key, or any DatabankFile's key, is a misuse → 400.
+    const keyOwner = await this.prisma.databankFileVersion.findUnique({
+      where: { storageKey: dto.storageKey },
+      select: { fileId: true },
+    });
+    if (keyOwner) {
+      if (keyOwner.fileId === fileId) {
+        return this.prisma.databankFile.findUniqueOrThrow({ where: { id: fileId }, select: this.fileSelect });
+      }
+      throw new BadRequestException('This upload has already been used.');
+    }
+    const fileOwner = await this.prisma.databankFile.findFirst({
+      where: { storageKey: dto.storageKey },
+      select: { id: true },
+    });
+    if (fileOwner) throw new BadRequestException('This upload has already been used.');
+
+    // Prove the object landed + capture its true size; over cap frees it + 400.
+    const head = await this.headWithinCap(dto.storageKey);
+    const sizeBytes = head.sizeBytes ?? dto.fileSizeBytes;
+    const expectedSeq = this.parseIfMatch(ifMatch);
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFileVersions(tx, fileId);
+      // SELECT … FOR UPDATE on the (live) file — serialises against deleteFile /
+      // purge and reads the mirror under the lock so current can't move.
+      const rows = await tx.$queryRaw<
+        {
+          id: string;
+          storageKey: string;
+          mimeType: string | null;
+          fileSizeBytes: bigint | null;
+          sha256: string | null;
+          currentVersionId: string | null;
+          versionSeq: number;
+          uploadedByUserId: string | null;
+          createdAt: Date;
+        }[]
+      >`
+        SELECT "id", "storageKey", "mimeType", "fileSizeBytes", "sha256",
+               "currentVersionId", "versionSeq", "uploadedByUserId", "createdAt"
+          FROM "processing"."databank_files"
+         WHERE "id" = ${fileId} AND "deletedAt" IS NULL
+         FOR UPDATE`;
+      const current = rows[0];
+      if (!current) {
+        // Destination no longer exists / was trashed meanwhile: free our own
+        // just-uploaded object and abort (mirrors commit()).
+        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        throw new NotFoundException('File not found');
+      }
+      if (expectedSeq !== undefined && expectedSeq !== current.versionSeq) {
+        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+      // sha256 no-op gating vs the CURRENT version only (a null current never
+      // matches, so a first version always lands). Holding the lock + FOR UPDATE,
+      // current can't move between this compare and the delete.
+      if (dto.sha256 && current.sha256 && dto.sha256 === current.sha256) {
+        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        return tx.databankFile.findUniqueOrThrow({ where: { id: fileId }, select: this.fileSelect });
+      }
+      // Materialise the implicit v1 from the file's mirror on first version.
+      if (!current.currentVersionId) {
+        await tx.databankFileVersion.create({
+          data: {
+            id: randomUUID(),
+            fileId,
+            versionNumber: 1,
+            storageKey: current.storageKey,
+            mimeType: current.mimeType,
+            fileSizeBytes: current.fileSizeBytes,
+            sha256: current.sha256,
+            source: DatabankFileSource.UPLOAD,
+            createdByUserId: current.uploadedByUserId,
+            createdAt: current.createdAt,
+          },
+        });
+      }
+      const newVersionId = await this.insertNextVersion(tx, {
+        fileId,
+        storageKey: dto.storageKey,
+        mimeType: dto.mimeType,
+        fileSizeBytes: sizeBytes,
+        sha256: dto.sha256,
+        createdByUserId: user.id,
+      });
+      // Repoint current + mirror the new bytes; guarded compare-and-set on the
+      // versionSeq read under the lock (If-Match already checked) → 412 on 0 rows.
+      const updated = await tx.databankFile.updateMany({
+        where: { id: fileId, versionSeq: current.versionSeq },
+        data: {
+          currentVersionId: newVersionId,
+          storageKey: dto.storageKey,
+          mimeType: dto.mimeType,
+          fileSizeBytes: sizeBytes,
+          sha256: dto.sha256,
+          versionSeq: current.versionSeq + 1,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+      return tx.databankFile.findUniqueOrThrow({ where: { id: fileId }, select: this.fileSelect });
+    }, FOLDER_TXN);
+  }
+
+  /** INSERT the next version (versionNumber = max+1) under the already-held
+   *  per-file lock. The @@unique([fileId, versionNumber]) backstops any race: on
+   *  P2002 re-read the max + retry. Returns the new version id. */
+  private async insertNextVersion(
+    tx: Prisma.TransactionClient,
+    data: {
+      fileId: string;
+      storageKey: string;
+      mimeType: string | null;
+      fileSizeBytes: number | bigint | null;
+      sha256: string | null;
+      createdByUserId: string | null;
+      name?: string | null;
+    },
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const agg = await tx.databankFileVersion.aggregate({
+        where: { fileId: data.fileId },
+        _max: { versionNumber: true },
+      });
+      const versionNumber = (agg._max.versionNumber ?? 0) + 1;
+      const id = randomUUID();
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await tx.databankFileVersion.create({
+          data: {
+            id,
+            fileId: data.fileId,
+            versionNumber,
+            storageKey: data.storageKey,
+            mimeType: data.mimeType,
+            fileSizeBytes: data.fileSizeBytes,
+            sha256: data.sha256,
+            source: DatabankFileSource.UPLOAD,
+            name: data.name ?? null,
+            createdByUserId: data.createdByUserId,
+          },
+        });
+        return id;
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue;
+        throw e;
+      }
+    }
+    throw new ConflictException('Could not number the new version — please retry.');
+  }
+
+  /**
+   * Restore a past version as the current one — a REPOINT only. Verifies the
+   * version belongs to the (live) file, honours If-Match, no-ops when it is
+   * already current, else repoints currentVersionId + mirrors that version's byte
+   * columns onto the file (versionSeq+1, guarded → 412). Creates / moves / frees
+   * ZERO objects: every version object already exists and stays referenced.
+   */
+  async restoreVersion(fileId: string, versionId: string, user: RequestUser, ifMatch?: string) {
+    await this.loadFile(fileId, user);
+    const expectedSeq = this.parseIfMatch(ifMatch);
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockFileVersions(tx, fileId);
+      const rows = await tx.$queryRaw<{ id: string; currentVersionId: string | null; versionSeq: number }[]>`
+        SELECT "id", "currentVersionId", "versionSeq"
+          FROM "processing"."databank_files"
+         WHERE "id" = ${fileId} AND "deletedAt" IS NULL
+         FOR UPDATE`;
+      const file = rows[0];
+      if (!file) throw new NotFoundException('File not found');
+      const version = await tx.databankFileVersion.findFirst({
+        where: { id: versionId, fileId },
+        select: { id: true, storageKey: true, mimeType: true, fileSizeBytes: true, sha256: true },
+      });
+      if (!version) throw new NotFoundException('Version not found');
+      if (expectedSeq !== undefined && expectedSeq !== file.versionSeq) {
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+      if (file.currentVersionId === versionId) return; // already current → idempotent no-op
+      const updated = await tx.databankFile.updateMany({
+        where: { id: fileId, versionSeq: file.versionSeq },
+        data: {
+          currentVersionId: versionId,
+          storageKey: version.storageKey,
+          mimeType: version.mimeType,
+          fileSizeBytes: version.fileSizeBytes,
+          sha256: version.sha256,
+          versionSeq: file.versionSeq + 1,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+    }, FOLDER_TXN);
+    return this.prisma.databankFile.findFirstOrThrow({ where: { id: fileId }, select: this.fileSelect });
+  }
+
+  /**
+   * PERMANENTLY remove a NON-CURRENT version to reclaim its storage. Refuses the
+   * current version (409) and the implicit v1 (no deletable row → 404). Captures
+   * the key BEFORE the delete, then frees it AFTER the commit — the deleted row
+   * was the SOLE reference to that unique key, so no double-free / no freeing a
+   * referenced object.
+   */
+  async deleteVersion(fileId: string, versionId: string, user: RequestUser, ifMatch?: string) {
+    await this.loadFile(fileId, user);
+    const expectedSeq = this.parseIfMatch(ifMatch);
+    const freedKey = await this.prisma.$transaction(async (tx) => {
+      await this.lockFileVersions(tx, fileId);
+      const rows = await tx.$queryRaw<{ id: string; currentVersionId: string | null; versionSeq: number }[]>`
+        SELECT "id", "currentVersionId", "versionSeq"
+          FROM "processing"."databank_files"
+         WHERE "id" = ${fileId} AND "deletedAt" IS NULL
+         FOR UPDATE`;
+      const file = rows[0];
+      if (!file) throw new NotFoundException('File not found');
+      if (expectedSeq !== undefined && expectedSeq !== file.versionSeq) {
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+      const version = await tx.databankFileVersion.findFirst({
+        where: { id: versionId, fileId },
+        select: { id: true, storageKey: true },
+      });
+      if (!version) throw new NotFoundException('Version not found');
+      // Cannot delete the current version (also implicitly refuses an implicit v1,
+      // which has no version row → the findFirst above already 404'd).
+      if (file.currentVersionId === versionId) {
+        throw new ConflictException('Cannot delete the current version — restore another version first.');
+      }
+      const res = await tx.databankFileVersion.deleteMany({ where: { id: versionId, fileId } });
+      if (res.count !== 1) throw new NotFoundException('Version not found');
+      await tx.databankFile.updateMany({
+        where: { id: fileId, versionSeq: file.versionSeq },
+        data: { versionSeq: file.versionSeq + 1 },
+      });
+      return version.storageKey;
+    }, FOLDER_TXN);
+    await this.freeStorage([freedKey]);
+    return { id: versionId, deleted: true };
+  }
+
+  /** Set a version's human label. versionSeq+1; If-Match honoured. */
+  async renameVersion(fileId: string, versionId: string, name: string, user: RequestUser, ifMatch?: string) {
+    await this.loadFile(fileId, user);
+    const label = (name ?? '').trim();
+    const expectedSeq = this.parseIfMatch(ifMatch);
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockFileVersions(tx, fileId);
+      const rows = await tx.$queryRaw<{ versionSeq: number }[]>`
+        SELECT "versionSeq"
+          FROM "processing"."databank_files"
+         WHERE "id" = ${fileId} AND "deletedAt" IS NULL
+         FOR UPDATE`;
+      const file = rows[0];
+      if (!file) throw new NotFoundException('File not found');
+      if (expectedSeq !== undefined && expectedSeq !== file.versionSeq) {
+        throw new PreconditionFailedException('The file version history changed since you loaded it.');
+      }
+      const res = await tx.databankFileVersion.updateMany({
+        where: { id: versionId, fileId },
+        data: { name: label || null },
+      });
+      if (res.count !== 1) throw new NotFoundException('Version not found');
+      await tx.databankFile.updateMany({
+        where: { id: fileId, versionSeq: file.versionSeq },
+        data: { versionSeq: file.versionSeq + 1 },
+      });
+    }, FOLDER_TXN);
+    return this.listVersions(fileId, user);
+  }
+
+  /**
+   * The version history, newest first. `etag` is W/"<versionSeq>" (the If-Match
+   * basis). Materialised state: the row whose id == currentVersionId is current.
+   * Implicit-v1 state (currentVersionId NULL, zero rows): a single SYNTHETIC
+   * current entry from the file's mirror with id:null — the UI offers neither
+   * restore nor delete on it (both apply only to non-current, materialised rows);
+   * its bytes download via the file's own getSignedUrl.
+   */
+  async listVersions(fileId: string, user: RequestUser) {
+    const file = await this.loadFileForRead(fileId, user);
+    const versions = await this.prisma.databankFileVersion.findMany({
+      where: { fileId },
+      orderBy: { versionNumber: 'desc' },
+      select: {
+        id: true,
+        versionNumber: true,
+        name: true,
+        fileSizeBytes: true,
+        mimeType: true,
+        sha256: true,
+        createdByUserId: true,
+        createdAt: true,
+      },
+    });
+    const etag = `W/"${file.versionSeq}"`;
+    if (versions.length === 0 && !file.currentVersionId) {
+      return {
+        etag,
+        versions: [
+          {
+            id: null,
+            versionNumber: 1,
+            name: null,
+            fileSizeBytes: file.fileSizeBytes,
+            mimeType: file.mimeType,
+            sha256: file.sha256,
+            createdByUserId: file.uploadedByUserId,
+            createdAt: file.createdAt,
+            isCurrent: true,
+          },
+        ],
+      };
+    }
+    return {
+      etag,
+      versions: versions.map((v) => ({ ...v, isCurrent: v.id === file.currentVersionId })),
+    };
+  }
+
+  /** A fresh signed URL for ONE version's bytes. Read-authorized; the audit trail
+   *  is written by @AuditDocumentAccess on the route. */
+  async getVersionSignedUrl(fileId: string, versionId: string, user: RequestUser) {
+    const file = await this.loadFileForRead(fileId, user);
+    const version = await this.prisma.databankFileVersion.findFirst({
+      where: { id: versionId, fileId },
+      select: { storageKey: true, mimeType: true },
+    });
+    if (!version) throw new NotFoundException('Version not found');
+    const url = await this.storage.getSignedUrl(version.storageKey);
+    return { url, fileName: file.fileName, mimeType: version.mimeType };
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -1737,6 +2219,9 @@ export class DatabankService {
   readonly fileSelect = {
     id: true, clientId: true, folderId: true, fileName: true, mimeType: true,
     fileSizeBytes: true, source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
+    // P3-2: the UI shows a history affordance when currentVersionId is set and
+    // holds versionSeq as the ETag for the optimistic-concurrency version ops.
+    currentVersionId: true, versionSeq: true,
   } satisfies Prisma.DatabankFileSelect;
 
   private assertSafeFile(file: Express.Multer.File | undefined): void {

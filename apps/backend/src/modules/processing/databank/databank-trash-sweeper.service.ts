@@ -136,6 +136,21 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
       });
       if (!batch.length) break;
       const ids = batch.map((f) => f.id);
+      // Capture the batch's version keys BEFORE the delete — the FK
+      // version.fileId → file ON DELETE CASCADE removes version rows without
+      // freeing their objects (P3-2 lifecycle invariant). A file is wholly gone or
+      // wholly restored, so the survivor check at FILE level governs its versions too.
+      // eslint-disable-next-line no-await-in-loop
+      const versionRows = await this.prisma.databankFileVersion.findMany({
+        where: { fileId: { in: ids } },
+        select: { fileId: true, storageKey: true },
+      });
+      const versionKeysByFile = new Map<string, string[]>();
+      for (const v of versionRows) {
+        const arr = versionKeysByFile.get(v.fileId) ?? [];
+        arr.push(v.storageKey);
+        versionKeysByFile.set(v.fileId, arr);
+      }
       // Compare-and-set on deletedAt AND re-check the folder: a file restored, or
       // newly nested under a folder trashed since the scan, is excluded (it then
       // ages with that folder).
@@ -151,8 +166,13 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
         select: { id: true },
       });
       const alive = new Set(survivors.map((s) => s.id));
+      // For each file truly gone, free the DEDUPED union {file key} ∪ {its version
+      // keys} — the current object appears in both the mirror and its version row.
+      const freeKeys = batch
+        .filter((f) => !alive.has(f.id))
+        .flatMap((f) => [f.storageKey, ...(versionKeysByFile.get(f.id) ?? [])]);
       // eslint-disable-next-line no-await-in-loop
-      await this.freeStorage(batch.filter((f) => !alive.has(f.id)).map((f) => f.storageKey));
+      await this.freeStorage([...new Set(freeKeys)]);
       purged += ids.length - alive.size;
       if (batch.length < DatabankTrashSweeperService.BATCH) break;
     }
@@ -212,6 +232,22 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
         where: { folderId: { in: reachIds }, deletedAt: { not: null } },
         select: { id: true, storageKey: true },
       });
+      // Capture those files' version keys BEFORE the delete — the FK cascade
+      // (folders → files → versions) removes version rows without freeing objects.
+      const fileIds = files.map((f) => f.id);
+      // eslint-disable-next-line no-await-in-loop
+      const versionRows = fileIds.length
+        ? await this.prisma.databankFileVersion.findMany({
+            where: { fileId: { in: fileIds } },
+            select: { fileId: true, storageKey: true },
+          })
+        : [];
+      const versionKeysByFile = new Map<string, string[]>();
+      for (const v of versionRows) {
+        const arr = versionKeysByFile.get(v.fileId) ?? [];
+        arr.push(v.storageKey);
+        versionKeysByFile.set(v.fileId, arr);
+      }
       // Delete the aged roots; the FK cascade removes the rest of each (trashed)
       // subtree. Compare-and-set skips a root restored since the scan.
       // eslint-disable-next-line no-await-in-loop
@@ -225,13 +261,17 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
         const survivors = new Set(
           (
             await this.prisma.databankFile.findMany({
-              where: { id: { in: files.map((f) => f.id) } },
+              where: { id: { in: fileIds } },
               select: { id: true },
             })
           ).map((s) => s.id),
         );
+        // The DEDUPED union {file key} ∪ {its version keys} for each file truly gone.
+        const freeKeys = files
+          .filter((f) => !survivors.has(f.id))
+          .flatMap((f) => [f.storageKey, ...(versionKeysByFile.get(f.id) ?? [])]);
         // eslint-disable-next-line no-await-in-loop
-        await this.freeStorage(files.filter((f) => !survivors.has(f.id)).map((f) => f.storageKey));
+        await this.freeStorage([...new Set(freeKeys)]);
       }
       purged += removed.count;
       if (batch.length < DatabankTrashSweeperService.BATCH) break;

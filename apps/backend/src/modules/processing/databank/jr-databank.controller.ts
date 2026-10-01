@@ -3,16 +3,19 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { diskStorage } from 'multer';
 import { tmpdir } from 'os';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -27,13 +30,16 @@ import { DatabankUploadService } from './databank-upload.service';
 import { CompleteUploadsDto, InitUploadsDto, SignPartsDto } from './databank-upload.dto';
 import {
   CommitUploadDto,
+  CommitVersionDto,
   CopyFileDto,
   CreateFolderDto,
   EnsureFolderPathsDto,
   MoveFileDto,
   MoveFolderDto,
   PresignUploadDto,
+  PresignVersionDto,
   RenameFolderDto,
+  RenameVersionDto,
   SearchDatabankDto,
   TrashQueryDto,
   UpdateFileDto,
@@ -324,6 +330,94 @@ export class JrDatabankController {
   @Audit({ action: 'DATABANK_FILE_DELETED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
   deleteFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
     return this.databank.deleteFile(fileId, user);
+  }
+
+  // ---- File versions (Databank P3-2) --------------------------------------
+  // Delegates to the SAME shared service the Processing databank uses; access is
+  // enforced there. list / signed-url are READ; the mutators are WRITE and honour
+  // an optional If-Match on the file's version ETag (W/"<versionSeq>"); a version
+  // purge is irreversible → audited HIGH.
+
+  /** The version history (newest first) + the ETag for If-Match. */
+  @Get('files/:fileId/versions')
+  @RequirePermissions(READ)
+  async listVersions(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @CurrentUser() user: RequestUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const out = await this.databank.listVersions(fileId, user);
+    res.setHeader('ETag', out.etag);
+    return out;
+  }
+
+  @Get('files/:fileId/versions/:versionId/signed-url')
+  @RequirePermissions(READ)
+  @AuditDocumentAccess('DatabankFile', 'fileId')
+  getVersionSignedUrl(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Param('versionId', ParseUUIDPipe) versionId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.getVersionSignedUrl(fileId, versionId, user);
+  }
+
+  @Post('files/:fileId/versions/presign')
+  @RequirePermissions(WRITE)
+  presignVersion(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Body() dto: PresignVersionDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.presignNewVersion(fileId, dto, user);
+  }
+
+  @Post('files/:fileId/versions/commit')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FILE_VERSION_ADDED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
+  commitVersion(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Body() dto: CommitVersionDto,
+    @CurrentUser() user: RequestUser,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.databank.commitNewVersion(fileId, dto, user, ifMatch);
+  }
+
+  @Post('files/:fileId/versions/:versionId/restore')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FILE_VERSION_RESTORED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
+  restoreVersion(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Param('versionId', ParseUUIDPipe) versionId: string,
+    @CurrentUser() user: RequestUser,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.databank.restoreVersion(fileId, versionId, user, ifMatch);
+  }
+
+  @Patch('files/:fileId/versions/:versionId')
+  @RequirePermissions(WRITE)
+  renameVersion(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Param('versionId', ParseUUIDPipe) versionId: string,
+    @Body() dto: RenameVersionDto,
+    @CurrentUser() user: RequestUser,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.databank.renameVersion(fileId, versionId, dto.name, user, ifMatch);
+  }
+
+  @Delete('files/:fileId/versions/:versionId')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FILE_VERSION_PURGED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'HIGH' })
+  deleteVersion(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Param('versionId', ParseUUIDPipe) versionId: string,
+    @CurrentUser() user: RequestUser,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.databank.deleteVersion(fileId, versionId, user, ifMatch);
   }
 
   // ---- Trash (soft-delete recovery + permanent purge, Databank P3) ---------

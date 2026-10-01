@@ -35,6 +35,7 @@ import {
   PresignUploadDto,
   RenameFolderDto,
   SearchDatabankDto,
+  TrashQueryDto,
   UpdateFileDto,
 } from './databank.dto';
 
@@ -323,5 +324,44 @@ export class JrDatabankController {
   @Audit({ action: 'DATABANK_FILE_DELETED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
   deleteFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
     return this.databank.deleteFile(fileId, user);
+  }
+
+  // ---- Trash (soft-delete recovery + permanent purge, Databank P3) ---------
+  // Delegates to the SAME shared service the Processing databank uses; access is
+  // enforced there. list is READ; restore / purge are WRITE (purge is audited HIGH).
+
+  /** The TOP-LEVEL trashed items in one scope (clientId OR personal). */
+  @Get('trash')
+  @RequirePermissions(READ)
+  listTrash(@Query() dto: TrashQueryDto, @CurrentUser() user: RequestUser) {
+    return this.databank.listTrash(user, { clientId: dto.clientId, personal: dto.personal });
+  }
+
+  @Post('folders/:folderId/restore')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FOLDER_RESTORED', entityType: 'DatabankFolder', category: 'MUTATION', severity: 'MEDIUM' })
+  restoreFolder(@Param('folderId', ParseUUIDPipe) folderId: string, @CurrentUser() user: RequestUser) {
+    return this.databank.restoreFolder(folderId, user);
+  }
+
+  @Post('files/:fileId/restore')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FILE_RESTORED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
+  restoreFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
+    return this.databank.restoreFile(fileId, user);
+  }
+
+  @Delete('folders/:folderId/purge')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FOLDER_PURGED', entityType: 'DatabankFolder', category: 'MUTATION', severity: 'HIGH' })
+  purgeFolder(@Param('folderId', ParseUUIDPipe) folderId: string, @CurrentUser() user: RequestUser) {
+    return this.databank.purgeFolder(folderId, user);
+  }
+
+  @Delete('files/:fileId/purge')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FILE_PURGED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'HIGH' })
+  purgeFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
+    return this.databank.purgeFile(fileId, user);
   }
 }

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabankFileSource, Prisma } from '@prisma/client';
@@ -86,6 +87,8 @@ export class DatabankService {
   /** A single server-side CopyObject is capped at 5 GiB on S3-compatible
    *  storage (R2 included); bigger copies need multipart UploadPartCopy. */
   private static readonly COPY_MAX_BYTES = 5 * 1024 * 1024 * 1024;
+
+  private readonly log = new Logger(DatabankService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -817,6 +820,40 @@ export class DatabankService {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194033, hashtext(${key}))`;
   }
 
+  /**
+   * Serialize a file INSERT against a concurrent subtree delete / purge of its
+   * destination folder, so no LIVE file is ever stranded inside a trashed (or
+   * already-removed) folder. Inside the caller's transaction, take a SHARED row
+   * lock on the live destination folder BEFORE the row is created: deleteFolder
+   * stamps its deletedAt (an UPDATE → FOR UPDATE) and purgeFolder / the sweeper
+   * hard-delete the row (DELETE → FOR UPDATE), both of which conflict with this
+   * FOR SHARE, so the two serialize on the folder row:
+   *   - the delete wins   → the folder is already gone / trashed here, so the
+   *     row falls back to the root (null) and lands LIVE at the top, never
+   *     stranded inside a folder that is being removed.
+   *   - this insert wins  → the folder is still live and held; the delete then
+   *     waits and trashes this freshly-recorded file together with its folder.
+   * The root (null) can never be trashed, so it needs no lock. Returns the
+   * folder id to store (or null for the root). This is a shared ROW lock, NOT
+   * the per-scope advisory lock, so it never blocks another upload to the same
+   * folder — only a delete/purge of that exact folder.
+   */
+  private async lockLiveDestinationFolder(
+    tx: Prisma.TransactionClient,
+    folderId: string | null,
+    scope: { clientId: string | null; ownerUserId: string | null },
+  ): Promise<string | null> {
+    if (!folderId) return null;
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "processing"."databank_folders"
+      WHERE "id" = ${folderId}
+        AND "deletedAt" IS NULL
+        AND "clientId" IS NOT DISTINCT FROM ${scope.clientId}
+        AND "ownerUserId" IS NOT DISTINCT FROM ${scope.ownerUserId}
+      FOR SHARE`;
+    return rows.length ? folderId : null;
+  }
+
   /** Re-read a folder once its scope is locked: loadFolder ran before the lock,
    *  so the folder may have been deleted meanwhile (its scope never changes). */
   private async reloadFolder(tx: Prisma.TransactionClient, folderId: string) {
@@ -1095,20 +1132,29 @@ export class DatabankService {
       ownerUserId: scope.ownerUserId,
     });
     try {
-      return await this.prisma.databankFile.create({
-        data: {
+      return await this.prisma.$transaction(async (tx) => {
+        // Serialize against a concurrent subtree delete/purge of the destination
+        // folder (see lockLiveDestinationFolder): if it is being trashed, the
+        // row lands at the root instead of stranded inside a removed folder.
+        const folderId = await this.lockLiveDestinationFolder(tx, targetFolder, {
           clientId: scope.clientId,
           ownerUserId: scope.ownerUserId,
-          folderId: targetFolder,
-          fileName: dto.fileName,
-          storageKey: dto.storageKey,
-          mimeType: dto.mimeType,
-          fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
-          source: DatabankFileSource.UPLOAD,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+        });
+        return tx.databankFile.create({
+          data: {
+            clientId: scope.clientId,
+            ownerUserId: scope.ownerUserId,
+            folderId,
+            fileName: dto.fileName,
+            storageKey: dto.storageKey,
+            mimeType: dto.mimeType,
+            fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
+            source: DatabankFileSource.UPLOAD,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } catch (e) {
       // Two commits of one key can overlap — a retry whose first reply was lost
       // while the server was still recording it — and both pass the look above.
@@ -1155,19 +1201,27 @@ export class DatabankService {
         file!.originalname,
       );
 
-      return await this.prisma.databankFile.create({
-        data: {
-          clientId,
-          folderId: targetFolder,
-          fileName: file!.originalname,
-          storageKey: uploaded.key,
-          mimeType: file!.mimetype,
-          fileSizeBytes: uploaded.sizeBytes,
-          source: fileSource,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+      // Record the row under the per-folder serialization (FOR SHARE on the
+      // destination) AFTER the stream, so a subtree delete/purge racing this
+      // upload can't strand the new file inside a trashed folder — it lands at
+      // the root instead. The lock is taken only for the quick insert, never
+      // across the (possibly multi-second) stream above.
+      return await this.prisma.$transaction(async (tx) => {
+        const dest = await this.lockLiveDestinationFolder(tx, targetFolder, { clientId, ownerUserId: null });
+        return tx.databankFile.create({
+          data: {
+            clientId,
+            folderId: dest,
+            fileName: file!.originalname,
+            storageKey: uploaded.key,
+            mimeType: file!.mimetype,
+            fileSizeBytes: uploaded.sizeBytes,
+            source: fileSource,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } finally {
       if (file?.path) await unlink(file.path).catch(() => undefined);
     }
@@ -1200,19 +1254,25 @@ export class DatabankService {
         file!.originalname,
       );
 
-      return await this.prisma.databankFile.create({
-        data: {
-          ownerUserId,
-          folderId: targetFolder,
-          fileName: file!.originalname,
-          storageKey: uploaded.key,
-          mimeType: file!.mimetype,
-          fileSizeBytes: uploaded.sizeBytes,
-          source: fileSource,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+      // Same per-folder serialization as uploadFile — land at the root rather
+      // than strand the row inside a folder being trashed. Lock only for the
+      // insert, never across the stream above.
+      return await this.prisma.$transaction(async (tx) => {
+        const dest = await this.lockLiveDestinationFolder(tx, targetFolder, { clientId: null, ownerUserId });
+        return tx.databankFile.create({
+          data: {
+            ownerUserId,
+            folderId: dest,
+            fileName: file!.originalname,
+            storageKey: uploaded.key,
+            mimeType: file!.mimetype,
+            fileSizeBytes: uploaded.sizeBytes,
+            source: fileSource,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } finally {
       if (file?.path) await unlink(file.path).catch(() => undefined);
     }
@@ -1287,15 +1347,21 @@ export class DatabankService {
 
   async moveFile(fileId: string, folderId: string | null | undefined, user: RequestUser) {
     const file = await this.loadFile(fileId, user);
-    const targetFolder = await this.assertFolderInScope(folderId, {
-      clientId: file.clientId,
-      ownerUserId: file.ownerUserId,
-    });
-    return this.prisma.databankFile.update({
-      where: { id: file.id },
-      data: { folderId: targetFolder },
-      select: this.fileSelect,
-    });
+    const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
+    const targetFolder = await this.assertFolderInScope(folderId, scope);
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize against a concurrent subtree delete/purge of the destination
+      // (see lockLiveDestinationFolder): a move is a 4th path that reparents a
+      // LIVE file into a folder, so without this it could strand the file inside
+      // a folder being trashed — and the sweeper's FK cascade would then destroy
+      // the live row. Relocate to the root if the folder was trashed meanwhile.
+      const dest = await this.lockLiveDestinationFolder(tx, targetFolder, scope);
+      return tx.databankFile.update({
+        where: { id: file.id },
+        data: { folderId: dest },
+        select: this.fileSelect,
+      });
+    }, FOLDER_TXN);
   }
 
   /**
@@ -1348,22 +1414,30 @@ export class DatabankService {
       source.fileName,
     );
 
-    return this.prisma.databankFile.create({
-      data: {
-        clientId: targetClientId,
-        ownerUserId: targetOwnerUserId,
-        folderId: targetFolder,
-        fileName: source.fileName,
-        storageKey: uploaded.key,
-        mimeType: source.mimeType,
-        fileSizeBytes: source.fileSizeBytes,
-        sha256: source.sha256, // same bytes → same hash (duplicate detection)
-        source: DatabankFileSource.COPIED,
-        copiedFromFileId: source.id,
-        uploadedByUserId: user.id,
-      },
-      select: this.fileSelect,
-    });
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize against a concurrent subtree delete/purge of the destination
+      // (see lockLiveDestinationFolder). The slow server-side copyObject above
+      // widens the window in which the folder could be trashed, so without this
+      // the live copy could be stranded inside a trashed folder and later
+      // destroyed by the sweeper's FK cascade. Land at the root if so.
+      const dest = await this.lockLiveDestinationFolder(tx, targetFolder, scope);
+      return tx.databankFile.create({
+        data: {
+          clientId: targetClientId,
+          ownerUserId: targetOwnerUserId,
+          folderId: dest,
+          fileName: source.fileName,
+          storageKey: uploaded.key,
+          mimeType: source.mimeType,
+          fileSizeBytes: source.fileSizeBytes,
+          sha256: source.sha256, // same bytes → same hash (duplicate detection)
+          source: DatabankFileSource.COPIED,
+          copiedFromFileId: source.id,
+          uploadedByUserId: user.id,
+        },
+        select: this.fileSelect,
+      });
+    }, FOLDER_TXN);
   }
 
   /** Soft-delete a single file (recoverable; the object stays in storage). */
@@ -1374,6 +1448,286 @@ export class DatabankService {
       data: { deletedAt: new Date() },
     });
     return { id: file.id, deleted: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Trash — list / restore / permanent purge (Databank P3)
+  // ---------------------------------------------------------------------------
+  //
+  // Soft delete (deleteFolder / deleteFile) stamps deletedAt; these recover or
+  // PERMANENTLY remove those rows. A purge is irreversible — it hard-deletes the
+  // row(s) and frees the storage object(s) — so every purge path first proves the
+  // target is TRASHED (deletedAt != null) and never touches a live row. Folder
+  // restore/purge run under the SAME per-scope folder lock as deleteFolder so
+  // they can't race the tree; files don't lock (like deleteFile / moveFile).
+
+  /** Load a TRASHED folder (deletedAt != null) for a restore/purge, then
+   *  authorize a WRITE on its scope. 404 if missing or still live — a live
+   *  folder is never a trash target. */
+  private async loadTrashedFolder(folderId: string, user: RequestUser) {
+    const folder = await this.prisma.databankFolder.findFirst({
+      where: { id: folderId, deletedAt: { not: null } },
+    });
+    if (!folder) throw new NotFoundException('Folder not found in trash');
+    await this.authorizeRow(folder, user, 'write');
+    return folder;
+  }
+
+  /** Load a TRASHED file (deletedAt != null) for a restore/purge, then authorize
+   *  a WRITE on its scope. 404 if missing or still live. */
+  private async loadTrashedFile(fileId: string, user: RequestUser) {
+    const file = await this.prisma.databankFile.findFirst({
+      where: { id: fileId, deletedAt: { not: null } },
+    });
+    if (!file) throw new NotFoundException('File not found in trash');
+    await this.authorizeRow(file, user, 'write');
+    return file;
+  }
+
+  /** Re-read a TRASHED folder once its scope is locked (loadTrashedFolder ran
+   *  before the lock — it may have been restored/purged meanwhile). */
+  private async reloadTrashedFolder(tx: Prisma.TransactionClient, folderId: string) {
+    const folder = await tx.databankFolder.findFirst({ where: { id: folderId, deletedAt: { not: null } } });
+    if (!folder) throw new NotFoundException('Folder not found in trash');
+    return folder;
+  }
+
+  /** Resolve + AUTHORIZE a trash scope for a READ (clientId → team-wide read,
+   *  personal → the owner, or a manager). Exactly one of clientId / personal. */
+  private async resolveTrashReadScope(
+    user: RequestUser,
+    params: { clientId?: string; personal?: boolean },
+  ): Promise<{ clientId: string | null; ownerUserId: string | null }> {
+    if (params.clientId && params.personal) {
+      throw new BadRequestException('Provide either clientId or personal: true, not both.');
+    }
+    if (params.clientId) {
+      await this.assertClientReadAccess(params.clientId, user);
+      return { clientId: params.clientId, ownerUserId: null };
+    }
+    if (params.personal) {
+      this.assertPersonalAccess(user.id, user);
+      return { clientId: null, ownerUserId: user.id };
+    }
+    throw new BadRequestException('Provide either clientId or personal: true.');
+  }
+
+  /**
+   * The TOP-LEVEL trashed items in one scope — what the user actually deleted,
+   * not the whole cascade. A trashed folder is top-level when its parent is null
+   * or is itself NOT trashed; a trashed file when its folder is null or NOT
+   * trashed. (A subtree delete trashes descendants too; those are nested under
+   * their trashed parent and are restored/purged WITH it, so they stay hidden
+   * here.) Ordered by deletedAt desc; `originalParentName` is the live folder the
+   * item sat in, when any.
+   */
+  async listTrash(user: RequestUser, params: { clientId?: string; personal?: boolean }) {
+    const scope = await this.resolveTrashReadScope(user, params);
+    const [folders, files] = await Promise.all([
+      this.prisma.databankFolder.findMany({
+        where: { ...scope, deletedAt: { not: null } },
+        select: { id: true, name: true, parentFolderId: true, deletedAt: true },
+      }),
+      this.prisma.databankFile.findMany({
+        where: { ...scope, deletedAt: { not: null } },
+        select: { id: true, fileName: true, folderId: true, deletedAt: true, fileSizeBytes: true },
+      }),
+    ]);
+    // A row is top-level only when its parent folder is live (or absent) — a
+    // trashed descendant is hidden under its trashed parent.
+    const trashedFolderIds = new Set(folders.map((f) => f.id));
+    const topFolders = folders.filter((f) => !f.parentFolderId || !trashedFolderIds.has(f.parentFolderId));
+    const topFiles = files.filter((f) => !f.folderId || !trashedFolderIds.has(f.folderId));
+
+    // The (live) parent folder each top-level item will restore back into — a
+    // label for the trash view. One lookup for every referenced live parent.
+    const parentIds = [
+      ...new Set(
+        [...topFolders.map((f) => f.parentFolderId), ...topFiles.map((f) => f.folderId)].filter(
+          (v): v is string => !!v,
+        ),
+      ),
+    ];
+    const parents = parentIds.length
+      ? await this.prisma.databankFolder.findMany({
+          where: { id: { in: parentIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const parentName = new Map(parents.map((p) => [p.id, p.name]));
+
+    const items = [
+      ...topFolders.map((f) => ({
+        kind: 'folder' as const,
+        id: f.id,
+        name: f.name,
+        deletedAt: f.deletedAt as Date,
+        originalParentName: f.parentFolderId ? parentName.get(f.parentFolderId) ?? null : null,
+      })),
+      ...topFiles.map((f) => ({
+        kind: 'file' as const,
+        id: f.id,
+        name: f.fileName,
+        deletedAt: f.deletedAt as Date,
+        sizeBytes: f.fileSizeBytes,
+        originalParentName: f.folderId ? parentName.get(f.folderId) ?? null : null,
+      })),
+    ];
+    items.sort((a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
+    return items;
+  }
+
+  /**
+   * Restore a TRASHED folder (and its trashed subtree) to the databank. The
+   * destination is the folder's original parent IF it still exists and is live,
+   * otherwise the root — ancestors are NOT auto-restored. The name is
+   * disambiguated among LIVE siblings in the destination. Runs under the
+   * per-scope folder lock so it can't race a concurrent tree change.
+   */
+  async restoreFolder(folderId: string, user: RequestUser) {
+    const authorized = await this.loadTrashedFolder(folderId, user);
+    const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const folder = await this.reloadTrashedFolder(tx, folderId);
+      // Restore under the original parent only while it is live; otherwise the
+      // root. Never auto-restore an ancestor.
+      let destination: string | null = null;
+      if (folder.parentFolderId) {
+        const parent = await tx.databankFolder.findFirst({
+          where: {
+            id: folder.parentFolderId,
+            deletedAt: null,
+            clientId: scope.clientId,
+            ownerUserId: scope.ownerUserId,
+          },
+          select: { id: true },
+        });
+        destination = parent?.id ?? null;
+      }
+      const name = await this.uniqueFolderName(scope, destination, folder.name, folder.id, tx);
+      // The WHOLE trashed subtree (collectSubtree only walks LIVE children, so it
+      // would miss nested trashed folders — this un-stamps every trashed one).
+      const ids = await this.collectSubtreeWithTrashed(folder.id, tx);
+      await tx.databankFolder.updateMany({
+        where: { id: { in: ids }, deletedAt: { not: null } },
+        data: { deletedAt: null },
+      });
+      await tx.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: { not: null } },
+        data: { deletedAt: null },
+      });
+      return tx.databankFolder.update({
+        where: { id: folder.id },
+        data: { parentFolderId: destination, name },
+        select: { id: true, name: true, parentFolderId: true, updatedAt: true },
+      });
+    }, FOLDER_TXN);
+  }
+
+  /** Restore a TRASHED file to its folder if that folder is live, else the root.
+   *  Files allow duplicate names, so there is no rename. Runs under the per-scope
+   *  folder lock — like restoreFolder/deleteFolder/purgeFolder — so the
+   *  destination's live/trashed state is stable (no resurrecting into a folder
+   *  being trashed, and no race with a purge freeing this file's bytes). A
+   *  compare-and-set on deletedAt means a file purged since the load is a 404, not
+   *  a 500. */
+  async restoreFile(fileId: string, user: RequestUser) {
+    const file = await this.loadTrashedFile(fileId, user);
+    const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
+    const id = await this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      let destination: string | null = null;
+      if (file.folderId) {
+        const folder = await tx.databankFolder.findFirst({
+          where: { id: file.folderId, deletedAt: null, clientId: file.clientId, ownerUserId: file.ownerUserId },
+          select: { id: true },
+        });
+        destination = folder?.id ?? null;
+      }
+      const res = await tx.databankFile.updateMany({
+        where: { id: file.id, deletedAt: { not: null } },
+        data: { deletedAt: null, folderId: destination },
+      });
+      if (res.count !== 1) throw new NotFoundException('File not found in trash');
+      return file.id;
+    }, FOLDER_TXN);
+    return this.prisma.databankFile.findFirstOrThrow({ where: { id }, select: this.fileSelect });
+  }
+
+  /**
+   * PERMANENTLY remove a TRASHED file: hard-delete the row inside a transaction
+   * (a compare-and-set on deletedAt, so a live file — or one restored/purged
+   * since the load — is never removed), then free its storage object AFTER the
+   * commit. A storage failure leaves an orphan (reclaimed by retention) but never
+   * rolls back the delete. DB delete FIRST, free storage AFTER.
+   */
+  async purgeFile(fileId: string, user: RequestUser) {
+    const file = await this.loadTrashedFile(fileId, user);
+    await this.prisma.$transaction(async (tx) => {
+      const res = await tx.databankFile.deleteMany({
+        where: { id: file.id, deletedAt: { not: null } },
+      });
+      if (res.count !== 1) throw new NotFoundException('File not found in trash');
+    });
+    await this.freeStorage([file.storageKey]);
+    return { id: file.id, purged: true };
+  }
+
+  /**
+   * PERMANENTLY remove a TRASHED folder and its subtree: in one transaction
+   * (under the per-scope lock) capture every descendant file's storage key, then
+   * hard-delete all descendant file rows and all folder rows; free the storage
+   * AFTER the commit (best-effort). The folder MUST be trashed — a live folder is
+   * never touched. Every file row has its OWN unique storageKey, so freeing a
+   * purged object can never affect another row.
+   */
+  async purgeFolder(folderId: string, user: RequestUser) {
+    const authorized = await this.loadTrashedFolder(folderId, user);
+    const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
+    const { storageKeys, folderCount } = await this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const folder = await this.reloadTrashedFolder(tx, folderId);
+      const ids = await this.collectSubtreeWithTrashed(folder.id, tx);
+      // Belt-and-braces: uploads now take FOR SHARE on their live destination
+      // folder (lockLiveDestinationFolder), so a commit can no longer strand a
+      // LIVE file inside a folder being trashed — there should be none here. Keep
+      // the relocate anyway: if the invariant ever slipped, move a stray live
+      // file to the root rather than let the folder delete FK-cascade (permanently
+      // destroy) it. The user purged a TRASHED folder — never a live file.
+      // restoreFile/restoreFolder hold this same scope lock, so they can't add or
+      // resurrect one mid-purge.
+      await tx.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: null },
+        data: { folderId: null },
+      });
+      // Only TRASHED rows are ever hard-deleted, and storage is freed only for the
+      // files this transaction actually removes.
+      const trashed = await tx.databankFile.findMany({
+        where: { folderId: { in: ids }, deletedAt: { not: null } },
+        select: { id: true, storageKey: true },
+      });
+      // Files FIRST (FK folder → files), then the trashed folder rows.
+      await tx.databankFile.deleteMany({ where: { id: { in: trashed.map((f) => f.id) } } });
+      await tx.databankFolder.deleteMany({ where: { id: { in: ids }, deletedAt: { not: null } } });
+      return { storageKeys: trashed.map((f) => f.storageKey), folderCount: ids.length };
+    }, FOLDER_TXN);
+    await this.freeStorage(storageKeys);
+    return { purgedFolders: folderCount, purgedFiles: storageKeys.length };
+  }
+
+  /** Free storage objects best-effort, AFTER their rows are gone — a failure is
+   *  logged (the orphan is reclaimed by the retention sweeper), never thrown, so
+   *  it can't undo a committed DB delete. */
+  private async freeStorage(storageKeys: string[]): Promise<void> {
+    for (const key of storageKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.storage
+        .delete(key)
+        .catch((e) =>
+          this.log.warn(`databank purge: freeing ${key} failed (orphan left for retention): ${(e as Error).message}`),
+        );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1483,6 +1837,26 @@ export class DatabankService {
           FROM "processing"."databank_folders" f
           JOIN sub ON f."parentFolderId" = sub."id"
          WHERE f."deletedAt" IS NULL
+      )
+      SELECT "id" FROM sub`;
+    return rows.map((r) => r.id);
+  }
+
+  /** Every folder id in a subtree, root included, INCLUDING trashed descendants.
+   *  collectSubtree stops at live children (its recursion filters deletedAt IS
+   *  NULL), but a trashed subtree is entirely soft-deleted — restoring or purging
+   *  it needs the whole thing. UNION stops on any cycle. */
+  private async collectSubtreeWithTrashed(
+    rootId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<string[]> {
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      WITH RECURSIVE sub AS (
+        SELECT "id" FROM "processing"."databank_folders" WHERE "id" = ${rootId}
+        UNION
+        SELECT f."id"
+          FROM "processing"."databank_folders" f
+          JOIN sub ON f."parentFolderId" = sub."id"
       )
       SELECT "id" FROM sub`;
     return rows.map((r) => r.id);

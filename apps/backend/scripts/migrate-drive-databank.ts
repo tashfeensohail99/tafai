@@ -197,17 +197,34 @@ async function main() {
     try {
       const bytes = fs.readFileSync(absPath);
       const uploaded = await storage.upload(bytes, mimeFor(fileName), `databank/clients/${clientId}`, fileName);
-      await prisma.databankFile.create({
-        data: {
-          clientId,
-          folderId,
-          fileName,
-          storageKey: uploaded.key,
-          mimeType: mimeFor(fileName),
-          fileSizeBytes: uploaded.sizeBytes,
-          source: DatabankFileSource.MIGRATED,
-          migrationSourcePath: relPath,
-        },
+      // Record the row the same way the server upload paths do
+      // (DatabankService.lockLiveDestinationFolder): inside a transaction, take
+      // FOR SHARE on the LIVE destination folder before inserting, so an admin
+      // deleteFolder racing this migration cannot strand a live file inside a
+      // folder being trashed (the retention sweeper would later FK-cascade-destroy
+      // it). If the folder was trashed meanwhile, land the row at the root. The
+      // slow read/upload above stays OUTSIDE the transaction.
+      await prisma.$transaction(async (tx) => {
+        let dest = folderId;
+        if (folderId) {
+          const live = await tx.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "processing"."databank_folders"
+            WHERE "id" = ${folderId} AND "deletedAt" IS NULL AND "clientId" = ${clientId}
+            FOR SHARE`;
+          dest = live.length ? folderId : null;
+        }
+        await tx.databankFile.create({
+          data: {
+            clientId,
+            folderId: dest,
+            fileName,
+            storageKey: uploaded.key,
+            mimeType: mimeFor(fileName),
+            fileSizeBytes: uploaded.sizeBytes,
+            source: DatabankFileSource.MIGRATED,
+            migrationSourcePath: relPath,
+          },
+        });
       });
       report.filesMigrated += 1;
     } catch (e) {

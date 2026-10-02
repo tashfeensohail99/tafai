@@ -1105,6 +1105,20 @@ export class DatabankService {
     }
   }
 
+  /** True when a DatabankFileVersion row already owns this storage key. Create
+   *  paths (commitDirectUpload) must consult this because DatabankFileVersion and
+   *  DatabankFile each have their OWN @unique(storageKey) — one key can legally
+   *  exist once in each table, so a version-owned object could otherwise be adopted
+   *  as a second file's mirror and freed out from under the version on purge.
+   *  Accepts the prisma client or a tx so the caller can re-read inside a txn. */
+  private async isVersionOwnedKey(
+    db: Pick<Prisma.TransactionClient, 'databankFileVersion'>,
+    storageKey: string,
+  ): Promise<boolean> {
+    const owner = await db.databankFileVersion.findUnique({ where: { storageKey }, select: { id: true } });
+    return !!owner;
+  }
+
   /**
    * HEAD a freshly-PUT object to prove it landed and capture its true size, then
    * enforce the single-PUT cap. A presigned PUT can't enforce size (R2 has no
@@ -1164,6 +1178,16 @@ export class DatabankService {
       }
       throw new BadRequestException('This upload has already been used.');
     }
+    // A VERSION row can ALSO own a key — DatabankFileVersion.storageKey is a
+    // SEPARATE unique from DatabankFile.storageKey, so the file-table guard above
+    // is blind to it. A key that backs a version (e.g. a non-current version whose
+    // file's mirror restoreVersion repointed away) must NEVER become a new file's
+    // mirror: purging that new file would free an object another file's version
+    // still references. Reject the replay. (Honest clients always commit a fresh
+    // presigned UUID that no version row can own.)
+    if (await this.isVersionOwnedKey(this.prisma, dto.storageKey)) {
+      throw new BadRequestException('This upload has already been used.');
+    }
     // Prove the object landed, capture its true size and enforce the single-PUT
     // cap (factored out — see headWithinCap).
     const head = await this.headWithinCap(dto.storageKey);
@@ -1180,6 +1204,11 @@ export class DatabankService {
           clientId: scope.clientId,
           ownerUserId: scope.ownerUserId,
         });
+        // Defence-in-depth, re-read under the txn: refuse a key a version row owns
+        // (a committed adoption between the pre-txn check and here is now visible).
+        if (await this.isVersionOwnedKey(tx, dto.storageKey)) {
+          throw new BadRequestException('This upload has already been used.');
+        }
         return tx.databankFile.create({
           data: {
             clientId: scope.clientId,

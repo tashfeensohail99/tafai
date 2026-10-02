@@ -4,20 +4,31 @@ import {
   copyDatabankFile,
   createDatabankFolder,
   createPersonalDatabankFolder,
+  databankVersionSignedUrl,
   deleteDatabankFile,
   deleteDatabankFolder,
+  deleteDatabankVersion,
   directUploadDatabankFile,
   fetchDatabankByAssociate,
+  fetchDatabankFileVersions,
+  fetchDatabankTrash,
   fetchDatabankTree,
   fetchPersonalDatabankTree,
   getDatabankFileSignedUrl,
   moveDatabankFile,
   moveDatabankFolder,
+  purgeDatabankFile,
+  purgeDatabankFolder,
   renameDatabankFile,
   renameDatabankFolder,
+  renameDatabankVersion,
+  restoreDatabankFile,
+  restoreDatabankFolder,
+  restoreDatabankVersion,
   searchDatabankFiles,
   updateDatabankFile,
   uploadDatabankFile,
+  uploadDatabankFileVersion,
   uploadPersonalDatabankFile,
   type ApiDatabankByAssociate,
   type ApiDatabankFile,
@@ -27,6 +38,8 @@ import {
   type DatabankSearchParams,
   type DatabankSearchResult,
   type DatabankUploadTarget,
+  type TrashItem,
+  type Version,
 } from './processing';
 import {
   copyJrDatabankFile,
@@ -34,18 +47,29 @@ import {
   createJrPersonalFolder,
   deleteJrDatabankFile,
   deleteJrDatabankFolder,
+  deleteJrDatabankVersion,
   directUploadJrDatabankFile,
   fetchJrDatabankByAssociate,
+  fetchJrDatabankFileVersions,
+  fetchJrDatabankTrash,
   fetchJrDatabankTree,
   fetchJrPersonalTree,
   jrDatabankFileSignedUrl,
+  jrDatabankVersionSignedUrl,
   moveJrDatabankFile,
   moveJrDatabankFolder,
+  purgeJrDatabankFile,
+  purgeJrDatabankFolder,
   renameJrDatabankFile,
   renameJrDatabankFolder,
+  renameJrDatabankVersion,
+  restoreJrDatabankFile,
+  restoreJrDatabankFolder,
+  restoreJrDatabankVersion,
   searchJrDatabankFiles,
   updateJrDatabankFile,
   uploadJrDatabankFile,
+  uploadJrDatabankFileVersion,
   uploadJrPersonalFile,
 } from './jr-databank';
 import type { DatabankBasePath } from './databank-upload/transport';
@@ -103,6 +127,32 @@ export interface DatabankApi {
   moveFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile>;
   copyFile(fileId: string, opts?: { targetClientId?: string; targetFolderId?: string | null }): Promise<ApiDatabankFile>;
   deleteFile(fileId: string): Promise<unknown>;
+
+  // ---- Trash (P3-1) — distinct names from the soft-delete deleteFile/deleteFolder.
+  /** The TOP-LEVEL trashed items in ONE scope (a client or the caller's personal area). */
+  fetchTrash(scope: { clientId: string } | { personal: true }): Promise<TrashItem[]>;
+  /** Restore a trashed folder (and its trashed subtree) back into the databank. */
+  restoreTrashedFolder(folderId: string): Promise<unknown>;
+  /** Restore a trashed file back into the databank. */
+  restoreTrashedFile(fileId: string): Promise<unknown>;
+  /** PERMANENTLY remove a trashed folder + its whole subtree (frees storage). */
+  purgeTrashedFolder(folderId: string): Promise<{ purgedFolders: number; purgedFiles: number }>;
+  /** PERMANENTLY remove a trashed file (frees its storage). */
+  purgeTrashedFile(fileId: string): Promise<{ id: string; purged: true }>;
+
+  // ---- File versions (P3-2) ----
+  /** A file's version history (newest first) + the `etag` to echo back as If-Match. */
+  listFileVersions(fileId: string): Promise<{ etag: string; versions: Version[] }>;
+  /** A fresh short-lived signed URL for ONE version's bytes. */
+  versionSignedUrl(fileId: string, versionId: string): Promise<{ url: string; fileName: string; mimeType: string | null }>;
+  /** Upload a NEW version of an existing file (presign → sha256 → PUT → commit). */
+  uploadFileVersion(fileId: string, file: File, onProgress?: (fraction: number) => void): Promise<ApiDatabankFile>;
+  /** Make an older version the current one (If-Match → 412 on a stale history). */
+  restoreFileVersion(fileId: string, versionId: string, ifMatch?: string): Promise<ApiDatabankFile>;
+  /** Set a version's human label; returns the refreshed `{ etag, versions }`. */
+  renameFileVersion(fileId: string, versionId: string, name: string, ifMatch?: string): Promise<{ etag: string; versions: Version[] }>;
+  /** PERMANENTLY delete a NON-current version (409 if it is the current one). */
+  deleteFileVersion(fileId: string, versionId: string, ifMatch?: string): Promise<{ id: string; deleted: true }>;
 }
 
 export const processingDatabankApi: DatabankApi = {
@@ -129,6 +179,17 @@ export const processingDatabankApi: DatabankApi = {
   moveFile: moveDatabankFile,
   copyFile: copyDatabankFile,
   deleteFile: deleteDatabankFile,
+  fetchTrash: fetchDatabankTrash,
+  restoreTrashedFolder: restoreDatabankFolder,
+  restoreTrashedFile: restoreDatabankFile,
+  purgeTrashedFolder: purgeDatabankFolder,
+  purgeTrashedFile: purgeDatabankFile,
+  listFileVersions: fetchDatabankFileVersions,
+  versionSignedUrl: databankVersionSignedUrl,
+  uploadFileVersion: uploadDatabankFileVersion,
+  restoreFileVersion: restoreDatabankVersion,
+  renameFileVersion: renameDatabankVersion,
+  deleteFileVersion: deleteDatabankVersion,
 };
 
 export const jrDatabankApi: DatabankApi = {
@@ -155,4 +216,15 @@ export const jrDatabankApi: DatabankApi = {
   moveFile: moveJrDatabankFile,
   copyFile: copyJrDatabankFile,
   deleteFile: deleteJrDatabankFile,
+  fetchTrash: fetchJrDatabankTrash,
+  restoreTrashedFolder: restoreJrDatabankFolder,
+  restoreTrashedFile: restoreJrDatabankFile,
+  purgeTrashedFolder: purgeJrDatabankFolder,
+  purgeTrashedFile: purgeJrDatabankFile,
+  listFileVersions: fetchJrDatabankFileVersions,
+  versionSignedUrl: jrDatabankVersionSignedUrl,
+  uploadFileVersion: uploadJrDatabankFileVersion,
+  restoreFileVersion: restoreJrDatabankVersion,
+  renameFileVersion: renameJrDatabankVersion,
+  deleteFileVersion: deleteJrDatabankVersion,
 };

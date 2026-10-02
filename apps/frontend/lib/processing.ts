@@ -2462,3 +2462,232 @@ export function deleteDatabankFile(fileId: string): Promise<{ id: string; delete
     cache: 'no-store',
   });
 }
+
+// ---------------------------------------------------------------------------
+// Databank P3 — Trash (soft-delete recovery + permanent purge) and file version
+// history. Backend: apps/backend/.../databank.controller.ts (P3-1 trash + P3-2
+// versions, both already merged). Trash lists the TOP-LEVEL trashed rows in ONE
+// scope; restore/purge act on a single row (a folder purge takes its whole
+// subtree). A file keeps a history of its bytes — list/download are reads;
+// upload-new / restore / rename / delete are writes guarded by an optional
+// `If-Match` version ETag (W/"<n>") for optimistic concurrency.
+// ---------------------------------------------------------------------------
+
+/** One trashed databank row (a folder or a file) shown in the trash view,
+ *  newest-deleted first. `originalParentName` is the live parent it would
+ *  restore back into (null = the databank root). Files also carry their size. */
+export type TrashItem =
+  | {
+      kind: 'folder';
+      id: string;
+      name: string;
+      originalParentName: string | null;
+      deletedAt: string;
+    }
+  | {
+      kind: 'file';
+      id: string;
+      name: string;
+      originalParentName: string | null;
+      deletedAt: string;
+      sizeBytes: number | null;
+    };
+
+/** One entry in a file's version history (P3-2), newest first. An `id === null`
+ *  entry is the SYNTHETIC implicit-v1 (a file with no history yet): it is always
+ *  the current bytes and is download-only — never restorable / renamable /
+ *  deletable (download via the file's own signed URL). */
+export interface Version {
+  id: string | null;
+  versionNumber: number;
+  name: string | null;
+  fileSizeBytes: number | null;
+  mimeType: string | null;
+  sha256: string | null;
+  createdByUserId: string | null;
+  createdAt: string;
+  isCurrent: boolean;
+}
+
+/** The TOP-LEVEL trashed items in ONE scope (a client's databank OR the caller's
+ *  personal area), ordered newest-deleted first. */
+export function fetchDatabankTrash(
+  scope: { clientId: string } | { personal: true },
+): Promise<TrashItem[]> {
+  const sp = new URLSearchParams();
+  if ('clientId' in scope) sp.set('clientId', scope.clientId);
+  else sp.set('personal', 'true');
+  return apiFetch<TrashItem[]>(`/processing/databank/trash?${sp.toString()}`, { cache: 'no-store' });
+}
+
+/** Restore a trashed folder (and its trashed subtree) back into the databank. */
+export function restoreDatabankFolder(folderId: string): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/processing/databank/folders/${folderId}/restore`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+/** Restore a trashed file back into the databank. */
+export function restoreDatabankFile(fileId: string): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}/restore`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+/** PERMANENTLY remove a trashed folder and its whole subtree (frees storage). */
+export function purgeDatabankFolder(
+  folderId: string,
+): Promise<{ purgedFolders: number; purgedFiles: number }> {
+  return apiFetch(`/processing/databank/folders/${folderId}/purge`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+/** PERMANENTLY remove a trashed file (frees its storage). */
+export function purgeDatabankFile(fileId: string): Promise<{ id: string; purged: true }> {
+  return apiFetch(`/processing/databank/files/${fileId}/purge`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+/** A file's version history (newest first) plus the `etag` to echo back as
+ *  `If-Match` on the next restore / rename / delete (optimistic concurrency). */
+export function fetchDatabankFileVersions(
+  fileId: string,
+): Promise<{ etag: string; versions: Version[] }> {
+  return apiFetch(`/processing/databank/files/${fileId}/versions`, { cache: 'no-store' });
+}
+
+/** A fresh short-lived signed URL for ONE version's bytes. */
+export function databankVersionSignedUrl(
+  fileId: string,
+  versionId: string,
+): Promise<{ url: string; fileName: string; mimeType: string | null }> {
+  return apiFetch(
+    `/processing/databank/files/${fileId}/versions/${versionId}/signed-url`,
+    { cache: 'no-store' },
+  );
+}
+
+/** Presign a PUT for a NEW version of an existing file (the file's own scope). */
+export function presignDatabankVersion(
+  fileId: string,
+  body: { mimeType: string; fileSizeBytes: number; fileName?: string },
+): Promise<PresignedUploadResponse> {
+  return apiFetch<PresignedUploadResponse>(
+    `/processing/databank/files/${fileId}/versions/presign`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+/** Commit a completed new-version upload (becomes the current bytes). Additive,
+ *  so `ifMatch` is optional; a 412 means the history changed since it was read. */
+export function commitDatabankVersion(
+  fileId: string,
+  body: { storageKey: string; mimeType: string; fileSizeBytes: number; sha256: string },
+  ifMatch?: string,
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}/versions/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(ifMatch ? { 'If-Match': ifMatch } : {}) },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** Make an older version the current one. `ifMatch` → 412 on a stale history. */
+export function restoreDatabankVersion(
+  fileId: string,
+  versionId: string,
+  ifMatch?: string,
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(
+    `/processing/databank/files/${fileId}/versions/${versionId}/restore`,
+    {
+      method: 'POST',
+      headers: ifMatch ? { 'If-Match': ifMatch } : undefined,
+      cache: 'no-store',
+    },
+  );
+}
+
+/** Set a version's human label; returns the refreshed `{ etag, versions }`. */
+export function renameDatabankVersion(
+  fileId: string,
+  versionId: string,
+  name: string,
+  ifMatch?: string,
+): Promise<{ etag: string; versions: Version[] }> {
+  return apiFetch(`/processing/databank/files/${fileId}/versions/${versionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(ifMatch ? { 'If-Match': ifMatch } : {}) },
+    body: JSON.stringify({ name }),
+    cache: 'no-store',
+  });
+}
+
+/** PERMANENTLY delete a NON-current version (409 if it is the current one). */
+export function deleteDatabankVersion(
+  fileId: string,
+  versionId: string,
+  ifMatch?: string,
+): Promise<{ id: string; deleted: true }> {
+  return apiFetch(`/processing/databank/files/${fileId}/versions/${versionId}`, {
+    method: 'DELETE',
+    headers: ifMatch ? { 'If-Match': ifMatch } : undefined,
+    cache: 'no-store',
+  });
+}
+
+/**
+ * Upload a NEW VERSION of an existing databank file: presign → whole-file sha256
+ * → direct PUT to storage (with byte progress) → commit the new current bytes.
+ * Reuses the browser hasher (`lib/databank-upload/hash`) and the same direct-PUT
+ * helper (`putToStorage`) as `directUploadDatabankFile` — no hand-rolled crypto
+ * or PUT. Rejects up front when the file exceeds the direct-upload cap.
+ */
+export async function uploadDatabankFileVersion(
+  fileId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<ApiDatabankFile> {
+  const mimeType = file.type || 'application/octet-stream';
+  const presigned = await presignDatabankVersion(fileId, {
+    mimeType,
+    fileSizeBytes: file.size,
+    fileName: file.name,
+  });
+  if (file.size > presigned.maxBytes) {
+    throw new Error(
+      `Files larger than ${Math.round(presigned.maxBytes / (1024 ** 3))} GB can't be uploaded as a version here yet — use the main upload.`,
+    );
+  }
+  // A new version requires the direct-PUT path; dev storage modes (proxy) can't.
+  if (presigned.strategy === 'proxy' || !presigned.url) {
+    throw new Error('Uploading a new version is not available in this storage mode.');
+  }
+  // Whole-file sha256 (the server dedupes a no-op re-upload of the current bytes).
+  const { hashFile } = await import('./databank-upload/hash');
+  const sha256 = await hashFile(file, () => undefined, new AbortController().signal);
+  await putToStorage(
+    presigned.url,
+    file,
+    presigned.headers ?? {},
+    (loaded, total) => onProgress?.(total ? loaded / total : 0),
+  );
+  return commitDatabankVersion(fileId, {
+    storageKey: presigned.storageKey,
+    mimeType,
+    fileSizeBytes: file.size,
+    sha256,
+  });
+}

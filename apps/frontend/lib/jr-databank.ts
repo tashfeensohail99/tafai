@@ -14,6 +14,8 @@ import type {
   DatabankSearchResult,
   DatabankUploadTarget,
   PresignedUploadResponse,
+  TrashItem,
+  Version,
 } from './processing';
 
 /**
@@ -41,6 +43,8 @@ export type {
   DatabankSearchParams,
   DatabankSearchResult,
   DatabankUploadTarget,
+  TrashItem,
+  Version,
 };
 
 /**
@@ -313,5 +317,173 @@ export function deleteJrDatabankFile(fileId: string): Promise<{ id: string; dele
   return apiFetch<{ id: string; deleted: boolean }>(`/jr/databank/files/${fileId}`, {
     method: 'DELETE',
     cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Databank P3 — Trash + file version history (JR twins). Same shared backend
+// service as the processing helpers above; only the `/jr/databank` route +
+// JR permissions differ. Types are re-exported from `@/lib/processing`.
+// ---------------------------------------------------------------------------
+
+/** The TOP-LEVEL trashed items in ONE scope. JR twin of `fetchDatabankTrash`. */
+export function fetchJrDatabankTrash(
+  scope: { clientId: string } | { personal: true },
+): Promise<TrashItem[]> {
+  const sp = new URLSearchParams();
+  if ('clientId' in scope) sp.set('clientId', scope.clientId);
+  else sp.set('personal', 'true');
+  return apiFetch<TrashItem[]>(`/jr/databank/trash?${sp.toString()}`, { cache: 'no-store' });
+}
+
+export function restoreJrDatabankFolder(folderId: string): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/jr/databank/folders/${folderId}/restore`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+export function restoreJrDatabankFile(fileId: string): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/jr/databank/files/${fileId}/restore`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+export function purgeJrDatabankFolder(
+  folderId: string,
+): Promise<{ purgedFolders: number; purgedFiles: number }> {
+  return apiFetch(`/jr/databank/folders/${folderId}/purge`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+export function purgeJrDatabankFile(fileId: string): Promise<{ id: string; purged: true }> {
+  return apiFetch(`/jr/databank/files/${fileId}/purge`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `fetchDatabankFileVersions`. */
+export function fetchJrDatabankFileVersions(
+  fileId: string,
+): Promise<{ etag: string; versions: Version[] }> {
+  return apiFetch(`/jr/databank/files/${fileId}/versions`, { cache: 'no-store' });
+}
+
+/** JR twin of `databankVersionSignedUrl`. */
+export function jrDatabankVersionSignedUrl(
+  fileId: string,
+  versionId: string,
+): Promise<{ url: string; fileName: string; mimeType: string | null }> {
+  return apiFetch(`/jr/databank/files/${fileId}/versions/${versionId}/signed-url`, {
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `presignDatabankVersion`. */
+export function presignJrDatabankVersion(
+  fileId: string,
+  body: { mimeType: string; fileSizeBytes: number; fileName?: string },
+): Promise<PresignedUploadResponse> {
+  return apiFetch<PresignedUploadResponse>(`/jr/databank/files/${fileId}/versions/presign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `commitDatabankVersion`. */
+export function commitJrDatabankVersion(
+  fileId: string,
+  body: { storageKey: string; mimeType: string; fileSizeBytes: number; sha256: string },
+  ifMatch?: string,
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/jr/databank/files/${fileId}/versions/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(ifMatch ? { 'If-Match': ifMatch } : {}) },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `restoreDatabankVersion`. */
+export function restoreJrDatabankVersion(
+  fileId: string,
+  versionId: string,
+  ifMatch?: string,
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/jr/databank/files/${fileId}/versions/${versionId}/restore`, {
+    method: 'POST',
+    headers: ifMatch ? { 'If-Match': ifMatch } : undefined,
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `renameDatabankVersion`. */
+export function renameJrDatabankVersion(
+  fileId: string,
+  versionId: string,
+  name: string,
+  ifMatch?: string,
+): Promise<{ etag: string; versions: Version[] }> {
+  return apiFetch(`/jr/databank/files/${fileId}/versions/${versionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(ifMatch ? { 'If-Match': ifMatch } : {}) },
+    body: JSON.stringify({ name }),
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `deleteDatabankVersion`. */
+export function deleteJrDatabankVersion(
+  fileId: string,
+  versionId: string,
+  ifMatch?: string,
+): Promise<{ id: string; deleted: true }> {
+  return apiFetch(`/jr/databank/files/${fileId}/versions/${versionId}`, {
+    method: 'DELETE',
+    headers: ifMatch ? { 'If-Match': ifMatch } : undefined,
+    cache: 'no-store',
+  });
+}
+
+/** JR twin of `uploadDatabankFileVersion` — presign → sha256 → direct PUT →
+ *  commit, via the `/jr/databank` route. Reuses the shared hasher + `putToStorage`. */
+export async function uploadJrDatabankFileVersion(
+  fileId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<ApiDatabankFile> {
+  const mimeType = file.type || 'application/octet-stream';
+  const presigned = await presignJrDatabankVersion(fileId, {
+    mimeType,
+    fileSizeBytes: file.size,
+    fileName: file.name,
+  });
+  if (file.size > presigned.maxBytes) {
+    throw new Error(
+      `Files larger than ${Math.round(presigned.maxBytes / (1024 ** 3))} GB can't be uploaded as a version here yet — use the main upload.`,
+    );
+  }
+  if (presigned.strategy === 'proxy' || !presigned.url) {
+    throw new Error('Uploading a new version is not available in this storage mode.');
+  }
+  const { hashFile } = await import('./databank-upload/hash');
+  const sha256 = await hashFile(file, () => undefined, new AbortController().signal);
+  await putToStorage(
+    presigned.url,
+    file,
+    presigned.headers ?? {},
+    (loaded, total) => onProgress?.(total ? loaded / total : 0),
+  );
+  return commitJrDatabankVersion(fileId, {
+    storageKey: presigned.storageKey,
+    mimeType,
+    fileSizeBytes: file.size,
+    sha256,
   });
 }

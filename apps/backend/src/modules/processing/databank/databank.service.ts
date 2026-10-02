@@ -1956,14 +1956,26 @@ export class DatabankService {
          WHERE "id" = ${fileId} AND "deletedAt" IS NULL
          FOR UPDATE`;
       const current = rows[0];
-      // Delete our OWN just-uploaded object only when NO row references it — the
-      // `adopted` check above excluded any version row; this also refuses the live
-      // current mirror (belt-and-braces), so a concurrent commit that turned
-      // dto.storageKey into the current object can never have it deleted here.
+      // Delete our OWN just-uploaded object only when NO row references it — a
+      // GLOBAL reference re-read, not just file X's mirror. lockFileVersions is
+      // per-file, so a concurrent commit on ANOTHER file of the same client (a
+      // same-key replay) can adopt dto.storageKey while we hold only THIS file's
+      // lock; the top-of-txn `adopted` read is point-in-time and misses it. Re-read
+      // under the txn (READ COMMITTED sees that committed adopt) so we can never
+      // hard-delete another file's live current object; a genuinely unreferenced
+      // orphan (our own upload) is still reclaimed. Mirrors freeStorageIfUnreferenced.
       const deleteOwnUpload = async () => {
-        if (!current || current.storageKey !== dto.storageKey) {
-          await this.storage.delete(dto.storageKey).catch(() => undefined);
-        }
+        const ver = await tx.databankFileVersion.findUnique({
+          where: { storageKey: dto.storageKey },
+          select: { id: true },
+        });
+        if (ver) return;
+        const owningFile = await tx.databankFile.findFirst({
+          where: { storageKey: dto.storageKey },
+          select: { id: true },
+        });
+        if (owningFile) return;
+        await this.storage.delete(dto.storageKey).catch(() => undefined);
       };
       if (!current) {
         // Destination no longer exists / was trashed meanwhile: free our own

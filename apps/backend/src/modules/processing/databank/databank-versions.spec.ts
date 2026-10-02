@@ -47,6 +47,9 @@ function harness(file = CLIENT_FILE) {
     databankFile: {
       updateMany: jest.fn(async () => (order.push('tx.file.updateMany'), { count: 1 })),
       findUniqueOrThrow: jest.fn(async (a: any) => (order.push('tx.file.findUniqueOrThrow'), { id: a.where.id })),
+      // Used by deleteOwnUpload's global reference re-read. Default null = the key
+      // is NOT referenced by any file mirror → safe to free.
+      findFirst: jest.fn(async () => (order.push('tx.file.findFirst'), null)),
     },
     databankFileVersion: {
       // In-txn version-aware idempotency guard (under the per-file lock). Default
@@ -183,6 +186,21 @@ describe('DatabankService — commitNewVersion', () => {
       PreconditionFailedException,
     );
     expect(storage.delete).toHaveBeenCalledWith(NEW_KEY);
+  });
+
+  it('on an early-exit (If-Match 412), does NOT delete the key if a concurrent SAME-CLIENT file adopted it meanwhile', async () => {
+    // Regression for the round-2 cross-file race: lockFileVersions is per-file, so
+    // another file Y of the same client can adopt dto.storageKey while we hold only
+    // THIS file's lock. deleteOwnUpload must re-read globally and skip the delete so
+    // Y's now-live current object is never destroyed.
+    const { svc, tx, storage } = harness();
+    tx.databankFileVersion.findUnique
+      .mockResolvedValueOnce(null) // top adopted check: not yet adopted when we read
+      .mockResolvedValueOnce({ id: 'vY' }); // inside deleteOwnUpload: file Y just adopted K
+    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, '5')).rejects.toBeInstanceOf(
+      PreconditionFailedException,
+    );
+    expect(storage.delete).not.toHaveBeenCalled(); // Y's live current bytes preserved
   });
 });
 

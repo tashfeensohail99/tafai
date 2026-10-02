@@ -285,6 +285,12 @@ export class DatabankUploadService {
             clientId: scope.clientId,
             ownerUserId: scope.ownerUserId,
             sha256: { in: hashes },
+            // NEW-FILE sessions only — never adopt a resumable VERSION session
+            // (targetFileId set, P3 PR-2). Without this, a new-file upload whose
+            // content+name+folder+size happen to match an in-flight version upload
+            // (same user/scope) would resume it and, at commit, attach as a version
+            // of that file instead of creating the new file.
+            targetFileId: null,
             // A COMPLETING session is matched even past its resume deadline — it
             // may be parked holding an assembled object; a second upload of the
             // same file would become a duplicate row.
@@ -479,6 +485,9 @@ export class DatabankUploadService {
               clientId: scope.clientId,
               ownerUserId: scope.ownerUserId,
               sha256: { in: [...new Set(fresh.map((x) => x.c.f.sha256))] },
+              // NEW-FILE sessions only — a resumable VERSION session (targetFileId
+              // set) is never a rival of a new-file insert (see the resume query above).
+              targetFileId: null,
               OR: [
                 { status: DatabankUploadStatus.UPLOADING, expiresAt: { gt: now } },
                 { status: DatabankUploadStatus.COMPLETING },

@@ -217,6 +217,17 @@ describe('DatabankUploadService.init', () => {
     ]);
   });
 
+  it('[P3 PR-2] the batch init() resume/rival queries exclude VERSION sessions (targetFileId: null)', async () => {
+    const { svc, prisma } = harness();
+    // Forces the race-guard insert txn to run, so the rivals query is issued too.
+    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    // A new-file upload must NEVER adopt a resumable new-VERSION session (which
+    // would attach its bytes as a version of an unrelated file at commit).
+    for (const call of prisma.databankUpload.findMany.mock.calls) {
+      expect(call[0].where.targetFileId).toBe(null);
+    }
+  });
+
   it('starts over when R2 has truly lost a session (404) — retiring it only if still UPLOADING', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);

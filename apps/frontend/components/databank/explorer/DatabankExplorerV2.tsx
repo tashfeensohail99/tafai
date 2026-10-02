@@ -31,8 +31,18 @@ import {
   FolderUp,
   Upload,
   Trash2,
+  History,
+  RotateCcw,
 } from 'lucide-react';
-import type { ApiDatabankFolder, ApiDatabankFile, DatabankSearchFacets, DatabankUploadTarget } from '@/lib/processing';
+import type {
+  ApiDatabankFolder,
+  ApiDatabankFile,
+  DatabankSearchFacets,
+  DatabankUploadTarget,
+  TrashItem,
+  Version,
+} from '@/lib/processing';
+import { ApiClientError } from '@/lib/api-client';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
 // Uploads + new folder (Databank P2, PR-4) — mirrors the legacy DatabankTab.
@@ -764,6 +774,13 @@ export function DatabankExplorerV2({
   const [renameTarget, setRenameTarget] = useState<ApiDatabankFile | null>(null);
   const [moveTargets, setMoveTargets] = useState<ApiDatabankFile[] | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<ApiDatabankFile[] | null>(null);
+  // Trash view (P3-1) + per-file version history (P3-2).
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [versionsTarget, setVersionsTarget] = useState<ApiDatabankFile | null>(null);
+  const trashScope = useMemo<{ clientId: string } | { personal: true }>(
+    () => (personal ? { personal: true } : { clientId: clientId! }),
+    [personal, clientId],
+  );
 
   const doRename = useCallback(
     async (file: ApiDatabankFile, name: string) => {
@@ -1076,6 +1093,9 @@ export function DatabankExplorerV2({
               </button>
               <button type="button" onClick={() => setNewFolderOpen(true)} disabled={busy} style={toolbarBtn(false)}>
                 <FolderPlus size={15} /> New folder
+              </button>
+              <button type="button" onClick={() => setTrashOpen(true)} disabled={busy} style={toolbarBtn(false)}>
+                <Trash2 size={15} /> Trash
               </button>
               <span style={{ fontSize: 12, color: muted, whiteSpace: 'nowrap' }}>
                 into {selectedFolderId ? breadcrumb[breadcrumb.length - 1]?.name ?? rootLabel : rootLabel}
@@ -1468,6 +1488,9 @@ export function DatabankExplorerV2({
                                 <ContextMenu.Item className="dbx-item" onSelect={() => void download(file)}>
                                   <Download size={15} /> Open / Download
                                 </ContextMenu.Item>
+                                <ContextMenu.Item className="dbx-item" onSelect={() => setVersionsTarget(file)}>
+                                  <History size={15} /> Version history
+                                </ContextMenu.Item>
                                 {!readOnly ? (
                                   <>
                                     <ContextMenu.Item className="dbx-item" onSelect={() => setRenameTarget(file)}>
@@ -1527,6 +1550,7 @@ export function DatabankExplorerV2({
                 pathLabel={folderPathOf(detailsFile.folderId)}
                 onClose={() => setDetailsFile(null)}
                 onDownload={() => void download(detailsFile)}
+                onVersions={() => setVersionsTarget(detailsFile)}
                 onSave={(patch) => saveDetails(detailsFile, patch)}
               />
             ) : null}
@@ -1582,6 +1606,18 @@ export function DatabankExplorerV2({
       {deleteTargets ? (
         <DeleteDialog targets={deleteTargets} onClose={() => setDeleteTargets(null)} onSubmit={doDelete} />
       ) : null}
+      {trashOpen ? (
+        <TrashDialog api={api} scope={trashScope} onClose={() => setTrashOpen(false)} reload={reload} />
+      ) : null}
+      {versionsTarget ? (
+        <VersionsDialog
+          api={api}
+          file={versionsTarget}
+          canWrite={canWrite}
+          onClose={() => setVersionsTarget(null)}
+          patchFile={patchFile}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1596,6 +1632,7 @@ function DetailsPanel({
   pathLabel,
   onClose,
   onDownload,
+  onVersions,
   onSave,
 }: {
   file: ApiDatabankFile;
@@ -1604,6 +1641,7 @@ function DetailsPanel({
   pathLabel: string;
   onClose: () => void;
   onDownload: () => void;
+  onVersions: () => void;
   onSave: (patch: { description: string | null; tags: string[] }) => Promise<void>;
 }) {
   const [desc, setDesc] = useState(file.description ?? '');
@@ -1681,6 +1719,14 @@ function DetailsPanel({
           style={{ ...barBtn, justifyContent: 'center', width: '100%' }}
         >
           <Download size={14} /> Download
+        </button>
+
+        <button
+          type="button"
+          onClick={onVersions}
+          style={{ ...barBtn, justifyContent: 'center', width: '100%' }}
+        >
+          <History size={14} /> Version history
         </button>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -2063,6 +2109,458 @@ function DeleteDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Trash view (Databank P3-1) — restore / delete-forever the TOP-LEVEL trashed
+// rows in this scope. Reached from the toolbar (write-only, so never shown to a
+// read-only viewer). A folder purge removes its whole subtree.
+// ---------------------------------------------------------------------------
+function TrashDialog({
+  api,
+  scope,
+  onClose,
+  reload,
+}: {
+  api: DatabankApi;
+  scope: { clientId: string } | { personal: true };
+  onClose: () => void;
+  reload: () => Promise<void>;
+}) {
+  const [items, setItems] = useState<TrashItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<TrashItem | null>(null);
+
+  const refetch = useCallback(async () => {
+    setError(null);
+    try {
+      setItems(await api.fetchTrash(scope));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load the trash');
+      setItems([]);
+    }
+  }, [api, scope]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  const restore = useCallback(
+    async (item: TrashItem) => {
+      setBusyId(item.id);
+      setError(null);
+      try {
+        if (item.kind === 'folder') await api.restoreTrashedFolder(item.id);
+        else await api.restoreTrashedFile(item.id);
+        setItems((prev) => (prev ? prev.filter((x) => x.id !== item.id) : prev));
+        await reload();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Restore failed');
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [api, reload],
+  );
+
+  const purge = useCallback(
+    async (item: TrashItem) => {
+      setBusyId(item.id);
+      setError(null);
+      try {
+        if (item.kind === 'folder') await api.purgeTrashedFolder(item.id);
+        else await api.purgeTrashedFile(item.id);
+        setItems((prev) => (prev ? prev.filter((x) => x.id !== item.id) : prev));
+        setConfirm(null);
+        await reload();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Delete failed');
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [api, reload],
+  );
+
+  return (
+    <DialogShell
+      title="Trash"
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} style={ghostBtn}>
+          Close
+        </button>
+      }
+    >
+      {error ? <div style={{ fontSize: 12.5, color: danger, marginBottom: 10 }}>{error}</div> : null}
+      {confirm ? (
+        <div style={{ border, borderColor: danger, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 13, color: primary }}>
+            {confirm.kind === 'folder'
+              ? `Permanently delete “${confirm.name}”? This removes the whole folder and everything inside it, frees their storage and cannot be undone.`
+              : `Permanently delete “${confirm.name}”? This frees its storage and cannot be undone.`}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button type="button" onClick={() => setConfirm(null)} disabled={busyId === confirm.id} style={ghostBtn}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void purge(confirm)}
+              disabled={busyId === confirm.id}
+              style={{ ...primaryBtn, background: danger, borderColor: danger, opacity: busyId === confirm.id ? 0.6 : 1 }}
+            >
+              {busyId === confirm.id ? 'Deleting…' : 'Delete forever'}
+            </button>
+          </div>
+        </div>
+      ) : items === null ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: '20px 4px' }}>
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : items.length === 0 ? (
+        <div style={{ color: muted, fontSize: 13, padding: '28px 4px', textAlign: 'center' }}>Trash is empty.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {items.map((item) => (
+            <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border, borderRadius: 10, padding: '8px 10px' }}>
+              <span style={{ color: item.kind === 'folder' ? accent : muted, flexShrink: 0, display: 'inline-flex' }}>
+                {item.kind === 'folder' ? <Folder size={18} /> : <FileGlyph mime={null} size={18} />}
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>
+                  {item.name}
+                </div>
+                <div style={{ fontSize: 11.5, color: muted, marginTop: 2 }}>
+                  was in {item.originalParentName ?? 'root'} · deleted {fmtDate(item.deletedAt)}
+                  {item.kind === 'file' && item.sizeBytes != null ? ` · ${fmtSize(item.sizeBytes)}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                title="Restore"
+                onClick={() => void restore(item)}
+                disabled={busyId === item.id}
+                style={{ ...barBtn, opacity: busyId === item.id ? 0.6 : 1 }}
+              >
+                <RotateCcw size={14} /> Restore
+              </button>
+              <button
+                type="button"
+                title="Delete forever"
+                onClick={() => setConfirm(item)}
+                disabled={busyId === item.id}
+                style={{ ...barBtn, color: danger, borderColor: danger, opacity: busyId === item.id ? 0.6 : 1 }}
+              >
+                <Trash2 size={14} /> Delete forever
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </DialogShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Version history (Databank P3-2) — list a file's versions, upload a new one,
+// download / restore / rename / delete older ones. Every WRITE is hidden when
+// !canWrite (only Download remains). Mutators send If-Match (the last-read etag);
+// a 412 means the history moved under us → notice + refetch; a 409 on delete =
+// "that's the current version" (never offered, but surfaced if it happens).
+// ---------------------------------------------------------------------------
+function VersionsDialog({
+  api,
+  file,
+  canWrite,
+  onClose,
+  patchFile,
+}: {
+  api: DatabankApi;
+  file: ApiDatabankFile;
+  canWrite: boolean;
+  onClose: () => void;
+  patchFile: (id: string, patch: Partial<ApiDatabankFile>) => void;
+}) {
+  const [data, setData] = useState<{ etag: string; versions: Version[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Version | null>(null);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const uploadRef = useRef<HTMLInputElement>(null);
+
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setData(await api.listFileVersions(file.id));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load the version history');
+    } finally {
+      setLoading(false);
+    }
+  }, [api, file.id]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  // Shared runner for the write actions. A 412 = stale history → notice + refetch;
+  // a 409 = "current version" → surface its message; anything else → show it.
+  const run = useCallback(
+    async (fn: () => Promise<void>) => {
+      setBusy(true);
+      setNotice(null);
+      setActionError(null);
+      try {
+        await fn();
+      } catch (e) {
+        if (e instanceof ApiClientError && e.status === 412) {
+          setNotice('This file’s version history changed — reloading.');
+          await refetch();
+        } else if (e instanceof ApiClientError && e.status === 409) {
+          setActionError(e.message || 'Cannot delete the current version.');
+        } else {
+          setActionError(e instanceof Error ? e.message : 'Action failed');
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refetch],
+  );
+
+  // Current + synthetic-v1 download via the file's own signed URL (those bytes ARE
+  // the current file); any materialised older version via its own signed URL.
+  const downloadVersion = useCallback(
+    (v: Version) =>
+      run(async () => {
+        const res =
+          v.id === null || v.isCurrent ? await api.signedUrl(file.id) : await api.versionSignedUrl(file.id, v.id);
+        window.open(res.url, '_blank', 'noopener');
+      }),
+    [api, file.id, run],
+  );
+
+  const doUploadVersion = useCallback(
+    (f: File) =>
+      run(async () => {
+        setPct(0);
+        try {
+          const updated = await api.uploadFileVersion(file.id, f, (frac) => setPct(Math.round(frac * 100)));
+          patchFile(file.id, updated);
+          await refetch();
+        } finally {
+          setPct(null);
+        }
+      }),
+    [api, file.id, patchFile, refetch, run],
+  );
+
+  const restoreVersion = useCallback(
+    (v: Version) =>
+      run(async () => {
+        if (!data || v.id === null) return;
+        const updated = await api.restoreFileVersion(file.id, v.id, data.etag);
+        patchFile(file.id, updated);
+        await refetch();
+      }),
+    [api, data, file.id, patchFile, refetch, run],
+  );
+
+  const saveRename = useCallback(
+    (v: Version, name: string) =>
+      run(async () => {
+        if (!data || v.id === null || !name) return;
+        const res = await api.renameFileVersion(file.id, v.id, name, data.etag);
+        setData(res);
+        setRenameId(null);
+      }),
+    [api, data, file.id, run],
+  );
+
+  const deleteVersion = useCallback(
+    (v: Version) =>
+      run(async () => {
+        if (!data || v.id === null) return;
+        await api.deleteFileVersion(file.id, v.id, data.etag);
+        setConfirmDelete(null);
+        await refetch();
+      }),
+    [api, data, file.id, refetch, run],
+  );
+
+  return (
+    <DialogShell
+      title={`Versions — ${file.fileName}`}
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} style={ghostBtn}>
+          Close
+        </button>
+      }
+    >
+      {canWrite ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => uploadRef.current?.click()}
+            disabled={busy}
+            style={{ ...toolbarBtn(true), opacity: busy ? 0.6 : 1 }}
+          >
+            <Upload size={15} /> Upload new version
+          </button>
+          <input
+            ref={uploadRef}
+            type="file"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void doUploadVersion(f);
+              e.target.value = '';
+            }}
+          />
+          {pct !== null ? (
+            <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${pct}%`, background: accent, transition: 'width 0.2s' }} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {notice ? <div style={{ fontSize: 12.5, color: muted, marginBottom: 10 }}>{notice}</div> : null}
+      {actionError ? <div style={{ fontSize: 12.5, color: danger, marginBottom: 10 }}>{actionError}</div> : null}
+
+      {confirmDelete ? (
+        <div style={{ border, borderColor: danger, borderRadius: 10, padding: 12, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 13, color: primary }}>
+            Permanently delete version v{confirmDelete.versionNumber}? Its bytes are freed and it can’t be recovered.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button type="button" onClick={() => setConfirmDelete(null)} disabled={busy} style={ghostBtn}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void deleteVersion(confirmDelete)}
+              disabled={busy}
+              style={{ ...primaryBtn, background: danger, borderColor: danger, opacity: busy ? 0.6 : 1 }}
+            >
+              {busy ? 'Deleting…' : 'Delete version'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: '20px 4px' }}>
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : loadError ? (
+        <div style={{ color: danger, fontSize: 13, padding: '12px 4px' }}>{loadError}</div>
+      ) : !data || data.versions.length === 0 ? (
+        <div style={{ color: muted, fontSize: 13, padding: '20px 4px', textAlign: 'center' }}>No versions yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {data.versions.map((v) => {
+            const materialised = v.id !== null;
+            const actionable = canWrite && materialised && !v.isCurrent;
+            const isRenaming = renameId !== null && renameId === v.id;
+            return (
+              <div key={v.id ?? `current-${v.versionNumber}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, border, borderRadius: 10, padding: '8px 10px' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: primary }}>v{v.versionNumber}</span>
+                    {v.isCurrent ? (
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          letterSpacing: 0.3,
+                          textTransform: 'uppercase',
+                          color: accent,
+                          background: accentSoft,
+                          border,
+                          borderColor: accent,
+                          borderRadius: 999,
+                          padding: '1px 8px',
+                        }}
+                      >
+                        Current
+                      </span>
+                    ) : null}
+                    {v.name && !isRenaming ? <span style={{ fontSize: 12.5, color: muted }}>“{v.name}”</span> : null}
+                  </div>
+                  {isRenaming ? (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void saveRename(v, renameValue.trim());
+                          if (e.key === 'Escape') setRenameId(null);
+                        }}
+                        placeholder="Version label"
+                        aria-label="Version label"
+                        style={{ flex: 1, minWidth: 0, border, borderRadius: 6, padding: '4px 8px', fontSize: 12.5, background: surfaceSolid, color: primary, outline: 'none' }}
+                      />
+                      <button type="button" onClick={() => void saveRename(v, renameValue.trim())} disabled={busy || !renameValue.trim()} style={{ ...barBtn, opacity: busy || !renameValue.trim() ? 0.6 : 1 }}>
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setRenameId(null)} style={barBtn}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11.5, color: muted, marginTop: 2 }}>
+                      {v.fileSizeBytes == null ? '—' : fmtSize(v.fileSizeBytes)} · {fmtDate(v.createdAt)}
+                    </div>
+                  )}
+                </div>
+                {!isRenaming ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button type="button" title="Download" onClick={() => void downloadVersion(v)} disabled={busy} style={iconBtn}>
+                      <Download size={14} />
+                    </button>
+                    {actionable ? (
+                      <>
+                        <button type="button" title="Restore this version" onClick={() => void restoreVersion(v)} disabled={busy} style={iconBtn}>
+                          <RotateCcw size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Rename"
+                          onClick={() => {
+                            setRenameId(v.id);
+                            setRenameValue(v.name ?? '');
+                          }}
+                          disabled={busy}
+                          style={iconBtn}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button type="button" title="Delete version" onClick={() => setConfirmDelete(v)} disabled={busy} style={{ ...iconBtn, color: danger }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </DialogShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Small shared bits
 // ---------------------------------------------------------------------------
 function IndeterminateCheckbox({
@@ -2166,6 +2664,19 @@ const linkBtn: React.CSSProperties = {
   fontSize: 12.5,
   fontWeight: 600,
   padding: 0,
+};
+
+/** Compact square icon button (per-version row actions in the Versions dialog). */
+const iconBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border,
+  borderRadius: 8,
+  background: surfaceSolid,
+  color: primary,
+  cursor: 'pointer',
+  padding: '6px 8px',
 };
 
 const primaryBtn: React.CSSProperties = {

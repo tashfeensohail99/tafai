@@ -37,6 +37,7 @@ import {
   CopyFileDto,
   CreateFolderDto,
   EnsureFolderPathsDto,
+  InitVersionDto,
   MoveFileDto,
   MoveFolderDto,
   PresignUploadDto,
@@ -391,6 +392,20 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.presignNewVersion(fileId, dto, user);
+  }
+
+  /** Resumable (> 2 GB) new-version upload init (P3 PR-2): records a session
+   *  carrying targetFileId so complete attaches the verified object as a new
+   *  version. Same write permission + userId plumbing as the batch uploads/init. */
+  @Post('files/:fileId/versions/upload/init')
+  @RequirePermissions(WRITE)
+  initVersionUpload(
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Body() dto: InitVersionDto,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.uploads.initVersion(fileId, dto, user, userId);
   }
 
   @Post('files/:fileId/versions/commit')

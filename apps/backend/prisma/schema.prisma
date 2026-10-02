@@ -3830,6 +3830,11 @@ model DatabankUpload {
   /// another session is reused). "One session → at most one row" is enforced by
   /// DatabankFile.uploadSessionId instead.
   fileId           String?
+  /// When set, this resumable session records a NEW VERSION of this DatabankFile
+  /// (P3 resumable versions) instead of creating a new file. Plain id (no FK), like
+  /// fileId — a cascade deleting the target never breaks an in-flight session; a
+  /// gone target just fails the session at commit.
+  targetFileId     String?
   /// Resume deadline — 6 days after start, inside R2's 7-day auto-abort.
   expiresAt        DateTime
   createdAt        DateTime               @default(now())

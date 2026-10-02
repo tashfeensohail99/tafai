@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { DatabankUploadService, safeMimeType } from './databank-upload.service';
+import { DatabankTargetFileGoneError } from './databank.service';
 import { GiB, MiB } from './upload-plan';
 
 /**
@@ -30,6 +31,7 @@ function harness() {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
+      create: jest.fn().mockResolvedValue({}),
     },
     databankFile: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -37,6 +39,8 @@ function harness() {
       findUnique: jest.fn(),
       create: jest.fn().mockResolvedValue({ id: 'new-file' }),
     },
+    // P3 PR-2 — the version P2002 recovery re-reads the session's version row.
+    databankFileVersion: { findUnique: jest.fn() },
   };
   prisma.$executeRaw = jest.fn().mockResolvedValue(1); // pg_advisory_xact_lock in the commit
   prisma.$queryRaw = jest.fn().mockResolvedValue([{ id: 'folder' }]); // folder read FOR SHARE in the commit
@@ -62,6 +66,9 @@ function harness() {
       if (/\.exe$/i.test(n)) throw new BadRequestException('Files of type .exe are not allowed.');
     }),
     fileSelect: { id: true },
+    // P3 PR-2 — the resumable version path.
+    loadFileForVersionWrite: jest.fn(),
+    attachUploadedVersion: jest.fn(),
   };
   const svc = new DatabankUploadService(prisma as never, storage as never, databank as never);
   return { svc, prisma, storage, databank };
@@ -675,6 +682,77 @@ describe('DatabankUploadService.complete / finalize', () => {
     const { results } = await h.svc.complete({ ids: ['nope'] } as never, USER);
     expect(results).toEqual([{ id: 'nope', status: 'not-found' }]);
   });
+
+  // ---- P3 PR-2 — resumable NEW-VERSION commit branch (targetFileId set) ------
+  // commit() has ONE guarded early return for a version session: it delegates to
+  // DatabankService.attachUploadedVersion (mocked here) and flips the session
+  // COMPLETED under the same claim CAS. The whole new-file path is left untouched.
+
+  it('[version] attaches the object as a new version: COMPLETED, fileId = target, r2CleanedAt set, bytes kept (no new file)', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    h.databank.attachUploadedVersion.mockResolvedValueOnce({ file: { id: 'F1' }, noop: false });
+    const res = await complete(h, session({ targetFileId: 'F1' }));
+    expect(res).toMatchObject({ status: 'completed', file: { id: 'F1' } });
+    expect(h.databank.attachUploadedVersion).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetFileId: 'F1', storageKey: 'databank/clients/c1/k.zip', uploadSessionId: 's1' }),
+    );
+    const commitData = h.prisma.databankUpload.updateMany.mock.calls[1][0].data;
+    expect(commitData).toMatchObject({ status: 'COMPLETED', fileId: 'F1', completingAt: null });
+    expect(commitData.r2CleanedAt).toBeInstanceOf(Date); // our bytes ARE the version → kept, nothing to free
+    expect(h.storage.delete).not.toHaveBeenCalled();
+    expect(h.prisma.databankFile.create).not.toHaveBeenCalled(); // new-file path never taken
+  });
+
+  it('[version] a sha256 no-op keeps r2CleanedAt null (twin) and frees the redundant object via cleanupStorage', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    h.databank.attachUploadedVersion.mockResolvedValueOnce({ file: { id: 'F1' }, noop: true });
+    const res = await complete(h, session({ targetFileId: 'F1' }));
+    expect(res).toMatchObject({ status: 'completed', file: { id: 'F1' } });
+    expect(h.prisma.databankUpload.updateMany.mock.calls[1][0].data).toMatchObject({ status: 'COMPLETED', fileId: 'F1', r2CleanedAt: null });
+    expect(h.storage.abortMultipartUpload).toHaveBeenCalledWith('databank/clients/c1/k.zip', 'r2-up'); // redundant copy freed
+  });
+
+  it('[version] LostClaim when the commit CAS count != 1 → reports the settled state, creates nothing', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    h.databank.attachUploadedVersion.mockResolvedValueOnce({ file: { id: 'F1' }, noop: false });
+    h.prisma.databankUpload.updateMany
+      .mockResolvedValueOnce({ count: 1 }) // the finalize claim
+      .mockResolvedValueOnce({ count: 0 }); // the commit CAS lost the claim
+    h.prisma.databankUpload.findUnique.mockResolvedValueOnce(session({ status: 'COMPLETING', targetFileId: 'F1' }));
+    expect(await complete(h, session({ targetFileId: 'F1' }))).toEqual({ id: 's1', status: 'in-progress' });
+  });
+
+  it('[version] a gone target file → FAILED + storage freed (terminal, not retried forever)', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValue({ exists: true, sizeBytes: 40 * MiB });
+    h.databank.attachUploadedVersion.mockRejectedValueOnce(new DatabankTargetFileGoneError());
+    const res = await complete(h, session({ targetFileId: 'F1' }));
+    expect(res).toMatchObject({ status: 'failed', reason: expect.stringMatching(/was removed/) });
+    expect(h.prisma.databankUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED', failureReason: 'target file no longer exists' }) }),
+    );
+    expect(h.storage.delete).toHaveBeenCalledWith('databank/clients/c1/k.zip');
+  });
+
+  it('[version] recovers the file a racing finalizer already versioned (P2002 on uploadSessionId → databankFileVersion)', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    h.prisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.22.0',
+        meta: { target: ['uploadSessionId'] },
+      }),
+    );
+    h.prisma.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'F1' }); // the session's version
+    h.prisma.databankFile.findUnique.mockResolvedValueOnce({ id: 'F1' });
+    expect(await complete(h, session({ targetFileId: 'F1' }))).toMatchObject({ status: 'completed', file: { id: 'F1' } });
+    expect(h.prisma.databankUpload.updateMany.mock.calls.at(-1)![0].data).toMatchObject({ status: 'COMPLETED', fileId: 'F1' });
+  });
 });
 
 describe('DatabankUploadService.abort / cleanupStorage', () => {
@@ -768,5 +846,81 @@ describe('DatabankUploadService.signParts / listOpen', () => {
     const res = await h.svc.listOpen(USER);
     expect(res.uploads).toHaveLength(200);
     expect(res.hasMore).toBe(true);
+  });
+});
+
+describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', () => {
+  const FILE = { id: 'F1', clientId: 'c1', ownerUserId: null as string | null, folderId: null as string | null };
+  const vdto = (over: Record<string, unknown> = {}) => ({
+    fileName: 'big.zip', mimeType: 'application/zip', sizeBytes: 100 * MiB, sha256: H('a'), ...over,
+  });
+
+  it('falls back to the proxy path in dev storage modes (before any auth)', async () => {
+    const h = harness();
+    h.storage.supportsDirectUpload = false;
+    expect(await h.svc.initVersion('F1', vdto() as never, USER)).toEqual({ mode: 'proxy' });
+    expect(h.databank.loadFileForVersionWrite).not.toHaveBeenCalled();
+  });
+
+  it('kill switch DATABANK_RESUMABLE_UPLOADS=off sends the new version to the direct path (proxy), after authorizing', async () => {
+    const h = harness();
+    h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
+    process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
+    try {
+      expect(await h.svc.initVersion('F1', vdto() as never, USER)).toEqual({ mode: 'proxy' });
+      expect(h.databank.loadFileForVersionWrite).toHaveBeenCalledWith('F1', USER);
+      expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.DATABANK_RESUMABLE_UPLOADS;
+    }
+  });
+
+  it('rejects a version larger than the per-file cap (a rejected InitResult, never a session)', async () => {
+    const h = harness();
+    h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
+    const res = await h.svc.initVersion('F1', vdto({ fileName: 'huge.iso', sizeBytes: 51 * GiB, sha256: H('e') }) as never, USER);
+    expect(res.mode === 'direct' && res.result).toMatchObject({ index: 0, status: 'rejected' });
+    expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
+    expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a new version session under the version-identity advisory lock (targetFileId + the file’s scope/folder)', async () => {
+    const h = harness();
+    h.databank.loadFileForVersionWrite.mockResolvedValueOnce({ id: 'F1', clientId: 'c1', ownerUserId: null, folderId: 'FD' });
+    h.prisma.databankUpload.findFirst.mockResolvedValue(null); // resume probe + in-txn re-check both find nothing
+    const res = await h.svc.initVersion('F1', vdto() as never, USER);
+    if (res.mode !== 'direct') throw new Error('expected direct mode');
+    expect(res.result).toMatchObject({ status: 'upload', strategy: 'MULTIPART', resumed: false });
+    const row = h.prisma.databankUpload.create.mock.calls[0][0].data;
+    expect(row).toMatchObject({ targetFileId: 'F1', folderId: 'FD', clientId: 'c1', ownerUserId: null, strategy: 'MULTIPART', sha256: H('a') });
+    // The lock reuses ns 1145194035 (the init-race namespace) with a databank-version|
+    // key, so it can never collide with the new-file identity sessionIdentity.
+    const lock = h.prisma.$executeRaw.mock.calls.find((c: unknown[]) =>
+      String((c[0] as string[]).join('?')).includes('pg_advisory_xact_lock(1145194035'),
+    );
+    expect(lock).toBeDefined();
+    expect(lock![1]).toBe(`databank-version|F1|${H('a')}`);
+    expect(h.storage.createMultipartUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes an existing UPLOADING session for the same file + bytes instead of opening a second one', async () => {
+    const h = harness();
+    h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
+    h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ id: 'v-sess', targetFileId: 'F1' }));
+    h.storage.listAllParts.mockResolvedValueOnce(parts(2));
+    const res = await h.svc.initVersion('F1', vdto({ sizeBytes: 40 * MiB }) as never, USER);
+    if (res.mode !== 'direct') throw new Error('expected direct mode');
+    expect(res.result).toMatchObject({ status: 'upload', uploadId: 'v-sess', resumed: true, doneParts: [1, 2] });
+    expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
+    expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('follows an already-COMPLETING session for the same file + bytes (in-progress, no second upload)', async () => {
+    const h = harness();
+    h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
+    h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ id: 'v-sess', status: 'COMPLETING', targetFileId: 'F1' }));
+    const res = await h.svc.initVersion('F1', vdto() as never, USER);
+    expect(res.mode === 'direct' && res.result).toEqual({ index: 0, status: 'in-progress', uploadId: 'v-sess' });
+    expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
   });
 });

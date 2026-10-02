@@ -18,13 +18,14 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { RequestUser } from '../../../common/types/auth.types';
 import { StorageService, isNoSuchUploadError } from '../../storage/storage.service';
-import { DatabankService } from './databank.service';
+import { DatabankService, DatabankTargetFileGoneError } from './databank.service';
 import {
   CompleteUploadsDto,
   InitUploadFileDto,
   InitUploadsDto,
   SignPartsDto,
 } from './databank-upload.dto';
+import { InitVersionDto } from './databank.dto';
 import {
   GiB,
   expectedPartBytes,
@@ -553,6 +554,211 @@ export class DatabankUploadService {
     return { mode: 'direct', maxBytes: this.maxBytes, results };
   }
 
+  // ---------------------------------------------------------------------------
+  // initVersion — a SEPARATE single-file init for a resumable NEW VERSION of an
+  // existing file (P3 PR-2). The batch init() above is the hot, dedup-heavy
+  // new-file path and is left UNTOUCHED. A version is always "new bytes for this
+  // exact file", so there is no duplicate scanning here; the session carries
+  // targetFileId so commit() attaches the finished object as a new version.
+  // ---------------------------------------------------------------------------
+
+  async initVersion(
+    fileId: string,
+    dto: InitVersionDto,
+    user: RequestUser,
+    // Kept for route symmetry with the other upload endpoints. A version's scope
+    // is the TARGET FILE's own (client/owner), resolved below, so it is unused.
+    _targetUserId?: string,
+  ): Promise<{ mode: 'proxy' } | { mode: 'direct'; maxBytes: number; result: InitResult }> {
+    const direct = (result: InitResult) => ({ mode: 'direct' as const, maxBytes: this.maxBytes, result });
+    const retry = (reason: string): InitResult => ({ index: 0, status: 'retry', reason });
+    const inProgress = (uploadId: string): InitResult => ({ index: 0, status: 'in-progress', uploadId });
+    // Dev storage (local / supabase) has no direct-to-storage path — the client
+    // falls back to the small direct version upload (commitNewVersion) or the proxy.
+    if (!this.storage.supportsDirectUpload) return { mode: 'proxy' };
+    // Authorise a WRITE on the file's OWN scope (404s a missing/trashed file).
+    const file = await this.databank.loadFileForVersionWrite(fileId, user);
+    this.databank.assertSafeFileName(dto.fileName);
+    if (exceedsUploadCap(dto.sizeBytes, this.maxBytes)) {
+      return direct({ index: 0, status: 'rejected', reason: `Larger than the ${Math.round(this.maxBytes / GiB)} GB per-file upload limit.` });
+    }
+    let plan: UploadPlan;
+    try {
+      plan = planParts(dto.sizeBytes);
+    } catch {
+      return direct({ index: 0, status: 'rejected', reason: 'Invalid file size.' });
+    }
+    // Kill switch: DATABANK_RESUMABLE_UPLOADS=off sends a new version down the
+    // direct (≤ 2 GB) path instead — no new resumable session starts.
+    if (process.env.DATABANK_RESUMABLE_UPLOADS === 'off') return { mode: 'proxy' };
+
+    // The object lives under the file's OWN scope folder (mirrors fileScope /
+    // resolveWriteScope).
+    const scope: Scope = file.clientId
+      ? { clientId: file.clientId, ownerUserId: null, storageFolder: `databank/clients/${file.clientId}` }
+      : { clientId: null, ownerUserId: file.ownerUserId, storageFolder: `databank/users/${file.ownerUserId}` };
+    const mimeType = safeMimeType(dto.mimeType);
+    const now = new Date();
+
+    // RESUME: a live session for THIS file + exact bytes (same creator).
+    const open = await this.prisma.databankUpload.findFirst({
+      where: {
+        createdByUserId: user.id,
+        targetFileId: fileId,
+        sha256: dto.sha256,
+        OR: [
+          { status: DatabankUploadStatus.UPLOADING, expiresAt: { gt: now } },
+          { status: DatabankUploadStatus.COMPLETING },
+        ],
+      },
+    });
+    if (open) {
+      if (open.status === DatabankUploadStatus.COMPLETING) return direct(inProgress(open.id));
+      // UPLOADING — resume it, reusing init step 2's NoSuchUpload recovery.
+      try {
+        return direct(await this.resumeResult(0, open));
+      } catch (e) {
+        if (!isNoSuchUploadError(e)) {
+          this.logger.warn(`initVersion resume ${open.id} failed: ${errMsg(e)}`);
+          return direct(retry('Storage is busy — please try again.'));
+        }
+        // The multipart upload is gone: completed into the object (never recorded)
+        // or aborted/expired. Only a real 404 on the object means "nothing there".
+        const head = await this.storage.headObjectStrict(open.storageKey).catch(() => null);
+        const size = Number(open.sizeBytes);
+        if (head?.exists && head.sizeBytes === size) {
+          // Fully assembled but never recorded → PARK it (reclaimable at once).
+          await this.prisma.databankUpload.updateMany({
+            where: { id: open.id, status: DatabankUploadStatus.UPLOADING },
+            data: { status: DatabankUploadStatus.COMPLETING, completingAt: new Date(0) },
+          });
+          return direct(inProgress(open.id));
+        }
+        if (!head) return direct(retry('Storage is busy — please try again.'));
+        const moved = await this.retire(
+          { id: open.id, status: DatabankUploadStatus.UPLOADING },
+          DatabankUploadStatus.ABORTED,
+          'upload no longer exists in storage',
+          !head.exists,
+        );
+        if (moved === 0) return direct(inProgress(open.id)); // someone else moved it — follow that
+        if (head.exists) await this.cleanupStorage({ ...open, status: DatabankUploadStatus.ABORTED, updatedAt: new Date() });
+        // truly gone → fall through and create a fresh session below.
+      }
+    }
+
+    // CREATE a new session. Start the R2 multipart upload (outside the txn; a
+    // failure affects only this file), then insert under the version-identity
+    // advisory lock (ns 1145194035 — the init-race namespace — with a key that can
+    // never collide with the new-file identity sessionIdentity), re-checking for a
+    // live session a racing initVersion created since the findFirst above.
+    const storageKey = `${scope.storageFolder}/${randomUUID()}.${keyExtension(dto.fileName)}`;
+    let r2UploadId: string | null = null;
+    try {
+      r2UploadId =
+        plan.strategy === 'MULTIPART'
+          ? await this.withThrottleRetry(() => this.storage.createMultipartUpload(storageKey, mimeType))
+          : null;
+    } catch (e) {
+      this.logger.warn(`initVersion ${dto.fileName}: could not start upload: ${errMsg(e)}`);
+      return direct(retry('Storage is busy — please try again.'));
+    }
+    const id = randomUUID();
+    const sessionExpiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+    const identityKey = `databank-version|${fileId}|${dto.sha256}`;
+    let created: { won: true } | { won: false; rival: DatabankUpload };
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194035, hashtext(${identityKey}))`;
+        const rival = await tx.databankUpload.findFirst({
+          where: {
+            createdByUserId: user.id,
+            targetFileId: fileId,
+            sha256: dto.sha256,
+            OR: [
+              { status: DatabankUploadStatus.UPLOADING, expiresAt: { gt: now } },
+              { status: DatabankUploadStatus.COMPLETING },
+            ],
+          },
+        });
+        if (rival) return { won: false as const, rival };
+        await tx.databankUpload.create({
+          data: {
+            id,
+            createdByUserId: user.id,
+            clientId: scope.clientId,
+            ownerUserId: scope.ownerUserId,
+            folderId: file.folderId,
+            targetFileId: fileId,
+            relativePath: null,
+            fileName: dto.fileName,
+            mimeType,
+            sizeBytes: BigInt(dto.sizeBytes),
+            fileLastModified: null,
+            sha256: dto.sha256,
+            strategy: plan.strategy,
+            storageKey,
+            r2UploadId,
+            partSize: plan.strategy === 'MULTIPART' ? plan.partSize : null,
+            partCount: plan.strategy === 'MULTIPART' ? plan.partCount : null,
+            expiresAt: sessionExpiresAt,
+          },
+        });
+        return { won: true as const };
+      }, INIT_TXN);
+    } catch (e) {
+      // Don't leave an R2 multipart upload nobody knows about.
+      if (r2UploadId) await this.storage.abortMultipartUpload(storageKey, r2UploadId).catch(() => undefined);
+      throw e;
+    }
+    if (!created.won) {
+      // Lost the race: free our redundant R2 upload and follow the winner.
+      if (r2UploadId) await this.storage.abortMultipartUpload(storageKey, r2UploadId).catch(() => undefined);
+      const rival = created.rival;
+      if (rival.status === DatabankUploadStatus.COMPLETING) return direct(inProgress(rival.id));
+      try {
+        return direct(await this.resumeResult(0, rival));
+      } catch (e) {
+        this.logger.warn(`initVersion race resume ${rival.id} failed: ${errMsg(e)}`);
+        return direct(retry('Storage is busy — please try again.'));
+      }
+    }
+
+    if (plan.strategy === 'MULTIPART') {
+      const urls = await this.signMultipart(
+        storageKey,
+        r2UploadId!,
+        Array.from({ length: Math.min(plan.partCount, INIT_URL_BATCH) }, (_, i) => i + 1),
+      );
+      return direct({
+        index: 0,
+        status: 'upload',
+        uploadId: id,
+        strategy: plan.strategy,
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+        doneParts: [],
+        urls,
+        urlsExpireAt: this.urlsExpireAt(),
+        resumed: false,
+        sessionExpiresAt,
+      });
+    }
+    return direct({
+      index: 0,
+      status: 'upload',
+      uploadId: id,
+      strategy: plan.strategy,
+      partSize: plan.sizeBytes,
+      partCount: 1,
+      doneParts: [],
+      urls: [await this.signSingle(storageKey, mimeType)],
+      urlsExpireAt: this.urlsExpireAt(),
+      resumed: false,
+      sessionExpiresAt,
+    });
+  }
+
   /** One new session row (the insert's shape, shared by init). */
   private sessionRow(
     x: { c: { folderId: string | null; f: InitUploadFileDto; plan: UploadPlan; mimeType: string }; id: string; storageKey: string; r2UploadId: string | null },
@@ -887,6 +1093,35 @@ export class DatabankUploadService {
     const mine = { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt };
     try {
       const outcome = await this.prisma.$transaction(async (tx) => {
+        // P3 PR-2 — a resumable NEW-VERSION session (targetFileId set) attaches
+        // its verified object as a new version of an EXISTING file instead of
+        // creating a new file. The whole new-file path below is byte-for-byte
+        // unchanged; this is a separate early return.
+        if (s.targetFileId) {
+          const res = await this.databank.attachUploadedVersion(tx, {
+            targetFileId: s.targetFileId,
+            storageKey: s.storageKey,
+            mimeType: s.mimeType,
+            fileSizeBytes: s.sizeBytes,
+            sha256: s.sha256,
+            createdByUserId: s.createdByUserId,
+            uploadSessionId: s.id,
+          });
+          const done = await tx.databankUpload.updateMany({
+            where: mine,
+            // no-op → our bytes are redundant (twin-cleanup frees them); attach →
+            // our bytes ARE the new current version, so keep them (r2CleanedAt now,
+            // exactly like the new-file commit once its object is the file's bytes).
+            data: {
+              status: DatabankUploadStatus.COMPLETED,
+              fileId: res.file.id,
+              completingAt: null,
+              r2CleanedAt: res.noop ? null : new Date(),
+            },
+          });
+          if (done.count !== 1) throw new LostClaimError();
+          return { file: res.file, twin: res.noop, relocated: false };
+        }
         let folderId = s.folderId;
         let relocated = false;
         if (folderId) {
@@ -965,6 +1200,14 @@ export class DatabankUploadService {
       return { id: s.id, status: 'completed', file: outcome.file, ...(outcome.relocated ? { relocated: true } : {}) };
     } catch (e) {
       if (e instanceof LostClaimError) return this.settledResult(s.id);
+      if (e instanceof DatabankTargetFileGoneError) {
+        // P3 PR-2 — the file this resumable version targeted was trashed/removed
+        // mid-upload. Retrying can never succeed → terminal: fail it and free the
+        // now-homeless bytes (the object is this session's own, referenced by nothing).
+        const moved = await this.retire(mine, DatabankUploadStatus.FAILED, 'target file no longer exists');
+        if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.FAILED, updatedAt: new Date() });
+        return { id: s.id, status: 'failed', reason: 'The file you were adding a version to was removed.' };
+      }
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
         // A row this file must point at is GONE (e.g. the client was deleted —
         // its databank files cascade away). Retrying can never succeed, so this
@@ -980,17 +1223,38 @@ export class DatabankUploadService {
         e.code === 'P2002' &&
         JSON.stringify(e.meta?.target ?? '').includes('uploadSessionId')
       ) {
-        const existing = await this.prisma.databankFile.findUnique({
-          where: { uploadSessionId: s.id },
-          select: this.databank.fileSelect,
-        });
-        if (existing) {
-          await this.prisma.databankUpload.updateMany({
-            where: mine,
-            // The row is this session's OWN (uploadSessionId) — nothing to free.
-            data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null, r2CleanedAt: new Date() },
+        if (s.targetFileId) {
+          // P3 PR-2 — a VERSION session's uploadSessionId lives on
+          // databankFileVersion (its fileId is the EXISTING target file), not on
+          // databankFile. Recover the version a racing finalizer already made.
+          const ver = await this.prisma.databankFileVersion.findUnique({
+            where: { uploadSessionId: s.id },
+            select: { fileId: true },
           });
-          return { id: s.id, status: 'completed', file: existing };
+          const existing = ver
+            ? await this.prisma.databankFile.findUnique({ where: { id: ver.fileId }, select: this.databank.fileSelect })
+            : null;
+          if (existing) {
+            await this.prisma.databankUpload.updateMany({
+              where: mine,
+              // The version row is this session's OWN — its object IS kept; nothing to free.
+              data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null, r2CleanedAt: new Date() },
+            });
+            return { id: s.id, status: 'completed', file: existing };
+          }
+        } else {
+          const existing = await this.prisma.databankFile.findUnique({
+            where: { uploadSessionId: s.id },
+            select: this.databank.fileSelect,
+          });
+          if (existing) {
+            await this.prisma.databankUpload.updateMany({
+              where: mine,
+              // The row is this session's OWN (uploadSessionId) — nothing to free.
+              data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null, r2CleanedAt: new Date() },
+            });
+            return { id: s.id, status: 'completed', file: existing };
+          }
         }
       }
       throw e;

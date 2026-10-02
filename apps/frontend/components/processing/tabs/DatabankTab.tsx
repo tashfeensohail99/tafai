@@ -87,6 +87,11 @@ export function DatabankTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Human label for the current blocking op (copy/move/delete/rename/new-folder)
+  // so the busy overlay reads e.g. "Copying “foo.pdf”…" instead of a bare
+  // "Working…". null = fall back to "Working…". (Byte-tracked uploads use
+  // `progress` instead; see the busy overlay below.)
+  const [activity, setActivity] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
 
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -430,6 +435,7 @@ export function DatabankTab({
     const name = newFolderName.trim();
     if (!name || readOnly) return;
     setBusy(true);
+    setActivity('Creating folder…');
     try {
       await makeFolder(name, currentFolderId);
       setNewFolderName('');
@@ -439,6 +445,7 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Could not create the folder');
     } finally {
       setBusy(false);
+      setActivity(null);
     }
   };
 
@@ -446,6 +453,7 @@ export function DatabankTab({
     const value = renameValue.trim();
     if (!value || readOnly) return;
     setBusy(true);
+    setActivity('Renaming…');
     try {
       if (kind === 'folder') await api.renameFolder(id, value);
       else await api.renameFile(id, value);
@@ -455,12 +463,14 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Rename failed');
     } finally {
       setBusy(false);
+      setActivity(null);
     }
   };
 
   const doDelete = async () => {
     if (!confirmDelete || readOnly) return;
     setBusy(true);
+    setActivity('Deleting…');
     try {
       if (confirmDelete.kind === 'folder') await api.deleteFolder(confirmDelete.id);
       else await api.deleteFile(confirmDelete.id);
@@ -470,12 +480,14 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       setBusy(false);
+      setActivity(null);
     }
   };
 
   const doMove = async (destFolderId: string | null) => {
     if (!moveTarget || readOnly) return;
     setBusy(true);
+    setActivity('Moving…');
     try {
       if (moveTarget.kind === 'folder') await api.moveFolder(moveTarget.id, destFolderId);
       else await api.moveFile(moveTarget.id, destFolderId);
@@ -485,12 +497,16 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Move failed');
     } finally {
       setBusy(false);
+      setActivity(null);
     }
   };
 
   const duplicateHere = async (file: ApiDatabankFile) => {
     if (readOnly) return;
     setBusy(true);
+    // Set the label instantly — a server-side copy of a large file can take many
+    // seconds, so the overlay must say what's happening the moment it appears.
+    setActivity(`Copying “${file.fileName}”…`);
     try {
       await api.copyFile(file.id, { targetFolderId: currentFolderId });
       await reload();
@@ -498,6 +514,7 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Copy failed');
     } finally {
       setBusy(false);
+      setActivity(null);
     }
   };
 
@@ -794,11 +811,16 @@ export function DatabankTab({
 
       {busy ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, color: muted }}>
+          {/* Scoped sweep for the indeterminate bar (copy/move/delete/rename/
+              new-folder have no byte progress to report). Theme-correct: the
+              track is --sos-border and the highlight is --sos-accent, both of
+              which adapt to light/dark. */}
+          <style>{`@keyframes sos-databank-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader2 size={13} className="animate-spin" />
             {progress
               ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
-              : 'Working…'}
+              : activity ?? 'Working…'}
           </div>
           {progress ? (
             <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
@@ -811,7 +833,19 @@ export function DatabankTab({
                 }}
               />
             </div>
-          ) : null}
+          ) : (
+            <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: '35%',
+                  borderRadius: 999,
+                  background: accent,
+                  animation: 'sos-databank-sweep 1.2s ease-in-out infinite',
+                }}
+              />
+            </div>
+          )}
         </div>
       ) : null}
 

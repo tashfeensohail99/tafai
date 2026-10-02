@@ -3729,9 +3729,19 @@ model DatabankFile {
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
   deletedAt           DateTime?
+  /// P3-2 file versioning. currentVersionId is a PLAIN id (NO FK relation —
+  /// matching copiedFromFileId / ownerUserId) to avoid a file<->version cyclic
+  /// FK; the lifecycle never trusts it for freeing. NULL = implicit v1 (the
+  /// current bytes are this row's mirror columns; no version row exists yet).
+  currentVersionId    String?
+  /// Optimistic-concurrency token for version ops (ETag basis). Bumped in the
+  /// SAME txn as every version-list mutation (new version / restore / delete /
+  /// rename).
+  versionSeq          Int                      @default(1)
 
-  client Client?         @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  folder DatabankFolder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  client   Client?               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  folder   DatabankFolder?       @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  versions DatabankFileVersion[] @relation("DatabankFileVersions")
 
   @@index([clientId])
   @@index([ownerUserId])
@@ -3740,6 +3750,44 @@ model DatabankFile {
   @@index([deletedAt])
   @@index([sha256])
   @@map("databank_files")
+  @@schema("processing")
+}
+
+/// A past (or current) set of bytes for a DatabankFile (P3-2 file versioning).
+/// INVARIANT: every stored object is owned by exactly ONE version row. The
+/// DatabankFile mirror columns (storageKey / mimeType / fileSizeBytes / sha256)
+/// are a denormalised read-cache of the CURRENT version, never an independent
+/// owner — so freeing a file's storage frees the DEDUPED set
+/// {file.storageKey} ∪ {every version.storageKey}, survivor-checked.
+/// Existing files have NO version rows (implicit v1); the first commitNewVersion
+/// lazily materialises v1 from the mirror, then appends the new current version.
+model DatabankFileVersion {
+  id              String             @id @default(uuid())
+  fileId          String
+  /// 1-based, monotonic per file; v1 = the original bytes.
+  versionNumber   Int
+  /// This version's OWN object key — backs at most ONE version row.
+  storageKey      String             @unique
+  mimeType        String?
+  /// BigInt like DatabankFile.fileSizeBytes (serialised as a number via
+  /// src/common/bigint-json.ts).
+  fileSizeBytes   BigInt?
+  sha256          String?
+  source          DatabankFileSource @default(UPLOAD)
+  /// Optional human label ("Signed final").
+  name            String?
+  /// Home for PR-2 resumable-version idempotency; always null in PR-1.
+  uploadSessionId String?            @unique
+  createdByUserId String?
+  createdAt       DateTime           @default(now())
+
+  file DatabankFile @relation("DatabankFileVersions", fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, versionNumber])
+  @@index([fileId])
+  @@index([storageKey])
+  @@index([sha256])
+  @@map("databank_file_versions")
   @@schema("processing")
 }
 

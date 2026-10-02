@@ -27,12 +27,16 @@ function svcHarness() {
   const tx: any = {
     databankFolder: mk('tx.folder'),
     databankFile: mk('tx.file'),
+    // P3-2: purge paths capture each trashed file's version keys before the FK
+    // cascade. Default empty → no version objects to free.
+    databankFileVersion: mk('tx.version'),
     $executeRaw: jest.fn(async () => (order.push('lock'), 1)),
     $queryRaw: jest.fn(async () => (order.push('tx.queryRaw'), [])),
   };
   const prisma: any = {
     databankFolder: mk('folder'),
     databankFile: mk('file'),
+    databankFileVersion: mk('version'),
     $queryRaw: jest.fn(async () => (order.push('queryRaw'), [])),
     $transaction: jest.fn(async (fn: (t: unknown) => unknown) => (order.push('txn'), fn(tx))),
   };
@@ -363,6 +367,11 @@ function sweeperHarness() {
     databankFolder: {
       findMany: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    // P3-2: both sweeper passes capture the batch/reach files' version keys before
+    // the delete. Default empty → no version objects to free.
+    databankFileVersion: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     // The folder pass resolves each aged root's FULL cascade reach (recursive CTE)
     // so it can free the bytes of descendant files the FK cascade removes.

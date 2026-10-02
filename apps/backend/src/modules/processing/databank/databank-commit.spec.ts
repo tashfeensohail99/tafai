@@ -55,6 +55,9 @@ function harness(opts: { headDelayTicks?: number } = {}) {
     rows.find((r) => (where.storageKey === undefined || r.storageKey === where.storageKey) && (where.id === undefined || r.id === where.id)) ?? null;
   const prisma = {
     databankUpload: { findUnique: jest.fn(async () => null) },
+    // isVersionOwnedKey (create paths reject a key a version row owns). Default
+    // null = not version-owned → normal flow.
+    databankFileVersion: { findUnique: jest.fn(async (): Promise<{ id: string } | null> => null) },
     databankFile: {
       findFirst: jest.fn(async (a: { where: { storageKey: string }; select?: Record<string, boolean> }) => {
         log.push('findFirst');
@@ -174,6 +177,17 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(rows[0].folderId).toBeNull(); // relocated to root — not left inside the trashed folder
     expect(out.folderId).toBeNull();
+  });
+
+  it('REFUSES a key already owned by a DatabankFileVersion row (never adopts a version object as a new file)', async () => {
+    const { svc, prisma, rows } = harness();
+    // A non-current version owns this key (its file's mirror was repointed away by
+    // restoreVersion). Committing it as a NEW file would double-own the object →
+    // purging that file would destroy the version's bytes. Must be refused.
+    prisma.databankFileVersion.findUnique.mockResolvedValue({ id: 'vX' });
+    await expect(svc.commitDirectUpload(DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    expect(rows).toHaveLength(0);
+    expect(prisma.databankFile.create).not.toHaveBeenCalled();
   });
 
   it('the database enforces it: storageKey is UNIQUE in the schema and a migration makes it so', () => {

@@ -33,6 +33,9 @@ import {
   Trash2,
   History,
   RotateCcw,
+  Copy,
+  Scissors,
+  ClipboardPaste,
 } from 'lucide-react';
 import type {
   ApiDatabankFolder,
@@ -50,6 +53,8 @@ import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
 import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
 import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presence';
 import { dataScopeOf } from '@/lib/databank-upload/keys';
+import { settlePaste, type PasteJob } from '@/lib/databank-explorer/settle-paste';
+import { canPasteInto } from '@/lib/databank-explorer/paste-target';
 import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
 import type { UploadDest } from '@/lib/databank-upload-browser';
 import { UploadResumeBanner } from '@/components/databank/UploadResumeBanner';
@@ -144,6 +149,8 @@ const EXPLORER_CSS = `
 .dbx-item[data-danger] { color: ${danger}; }
 .dbx-item[data-danger][data-highlighted] { background: rgba(220,38,38,0.10); }
 .dbx-sep { height: 1px; margin: 5px 4px; background: var(--sos-border, rgba(148,163,184,0.25)); }
+.dbx-item[data-disabled] { opacity: 0.45; cursor: default; }
+@keyframes sos-databank-sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(340%); } }
 .dbx-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.38); z-index: 70; }
 .dbx-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; background: ${surfaceSolid}; border: ${border}; border-radius: 14px; padding: 18px; z-index: 71; box-shadow: 0 24px 60px rgba(15,23,42,0.28); }
 `;
@@ -153,6 +160,11 @@ type FolderNode = { id: string; name: string; children: FolderNode[] };
 
 /** One "Databank root" + indented-path option for a move picker. */
 type FolderOption = { id: string | null; label: string; depth: number };
+
+/** The explorer's OWN clipboard (distinct from the OS image-paste). A copy
+ *  persists for repeat pastes; a cut clears once it pastes successfully. Each
+ *  entry holds EITHER files OR a single folder, never mixed. */
+type Clip = { op: 'copy' | 'cut'; files: ApiDatabankFile[]; folder: { id: string; name: string } | null };
 
 export function DatabankExplorerV2({
   clientId,
@@ -256,6 +268,39 @@ export function DatabankExplorerV2({
   }, [reload]);
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
+
+  // For the paste cycle-guard (canPasteInto) and the folder Move picker.
+  const parentOf = useMemo(
+    () => new Map<string, string | null>(folders.map((f) => [f.id, f.parentFolderId])),
+    [folders],
+  );
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string | null, string[]>();
+    for (const f of folders) {
+      const a = m.get(f.parentFolderId);
+      if (a) a.push(f.id);
+      else m.set(f.parentFolderId, [f.id]);
+    }
+    return m;
+  }, [folders]);
+  // A folder can't be moved/pasted into itself or any of its descendants.
+  const descendantsWithSelf = useCallback(
+    (rootId: string): Set<string> => {
+      const out = new Set<string>([rootId]);
+      const stack = [rootId];
+      while (stack.length) {
+        const id = stack.pop()!;
+        for (const c of childrenByParent.get(id) ?? []) {
+          if (!out.has(c)) {
+            out.add(c);
+            stack.push(c);
+          }
+        }
+      }
+      return out;
+    },
+    [childrenByParent],
+  );
 
   // Flat folders (parentFolderId) → nested tree data for react-arborist.
   const treeData = useMemo<FolderNode[]>(() => {
@@ -775,6 +820,13 @@ export function DatabankExplorerV2({
   const [renameTarget, setRenameTarget] = useState<ApiDatabankFile | null>(null);
   const [moveTargets, setMoveTargets] = useState<ApiDatabankFile[] | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<ApiDatabankFile[] | null>(null);
+  // ---- Clipboard + right-click Copy/Cut/Paste (files + folders) ----
+  const [clipboard, setClipboard] = useState<Clip | null>(null);
+  // A short verb for the busy overlay ("Copying…"/"Moving…") on the new ops.
+  const [activity, setActivity] = useState<string | null>(null);
+  // Folder Move…/Delete go through the (generalized) dialogs, like files.
+  const [folderMove, setFolderMove] = useState<{ id: string; name: string } | null>(null);
+  const [folderDelete, setFolderDelete] = useState<{ id: string; name: string } | null>(null);
   // Trash view (P3-1) + per-file version history (P3-2).
   const [trashOpen, setTrashOpen] = useState(false);
   const [versionsTarget, setVersionsTarget] = useState<ApiDatabankFile | null>(null);
@@ -816,6 +868,135 @@ export function DatabankExplorerV2({
     [api, removeFilesByIds],
   );
 
+  // ---- Paste the clipboard into a destination folder (null = root) ----------
+  // Copy → copyFile / copyFolder; cut → moveFile / moveFolder. settlePaste never
+  // rejects, so reload() in the finally always runs; a stale (gone) source is
+  // pruned from the clipboard rather than aborting the paste.
+  const doPaste = useCallback(
+    async (destFolderId: string | null) => {
+      if (readOnly || !clipboard) return;
+      const { op, files: clipFiles, folder: clipFolder } = clipboard;
+      if (clipFolder && !canPasteInto(destFolderId, clipFolder.id, parentOf)) {
+        setError("A folder can't be moved into itself or one of its own subfolders");
+        return;
+      }
+      setBusy(true);
+      setActivity(op === 'cut' ? 'Moving…' : 'Copying…');
+      setError(null);
+      const skipped: Array<{ fileName: string; reason: string }> = [];
+      const dest = destFolderId;
+      const jobs: PasteJob[] =
+        op === 'copy'
+          ? [
+              ...clipFiles.map((f) => ({ id: f.id, name: f.fileName, go: () => api.copyFile(f.id, { targetFolderId: dest }).then(() => {}) })),
+              ...(clipFolder
+                ? [{ id: clipFolder.id, name: clipFolder.name, go: () => api.copyFolder(clipFolder.id, { targetFolderId: dest }).then((r) => { if (r.skipped?.length) skipped.push(...r.skipped); }) }]
+                : []),
+            ]
+          : [
+              ...clipFiles.map((f) => ({ id: f.id, name: f.fileName, go: () => api.moveFile(f.id, dest).then(() => {}) })),
+              ...(clipFolder ? [{ id: clipFolder.id, name: clipFolder.name, go: () => api.moveFolder(clipFolder.id, dest).then(() => {}) }] : []),
+            ];
+      try {
+        const res = await settlePaste(jobs, (j) => j.go());
+        const goneIds = new Set(res.failed.filter((f) => f.gone).map((f) => f.id));
+        if (op === 'cut') {
+          setClipboard(null);
+        } else if (goneIds.size) {
+          setClipboard((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  files: prev.files.filter((f) => !goneIds.has(f.id)),
+                  folder: prev.folder && !goneIds.has(prev.folder.id) ? prev.folder : null,
+                }
+              : prev,
+          );
+        }
+        setClipboard((prev) => (prev && !prev.files.length && !prev.folder ? null : prev));
+        setRowSelection({});
+        const goneN = res.failed.filter((f) => f.gone).length;
+        const otherN = res.failed.length - goneN;
+        if (goneN) {
+          setError(`${goneN} item(s) no longer exist — they may have been moved or deleted, and were removed from your clipboard.`);
+        } else if (otherN) {
+          setError(`${otherN} item(s) could not be ${op === 'cut' ? 'moved' : 'copied'}.`);
+        } else if (skipped.length) {
+          const tooLarge = skipped.filter((s) => s.reason === 'TOO_LARGE');
+          setError(
+            tooLarge.length
+              ? `${tooLarge.length} file(s) over 5 GB were skipped and not copied: ${tooLarge.map((s) => s.fileName).join(', ')}`
+              : `${skipped.length} file(s) were skipped.`,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Paste failed');
+      } finally {
+        await reload();
+        setBusy(false);
+        setActivity(null);
+      }
+    },
+    [readOnly, clipboard, parentOf, api, reload],
+  );
+
+  const doFolderMove = useCallback(
+    async (folderId: string, destId: string | null) => {
+      await api.moveFolder(folderId, destId);
+      await reload();
+    },
+    [api, reload],
+  );
+
+  const doFolderDelete = useCallback(
+    async (folderId: string) => {
+      await api.deleteFolder(folderId);
+      await reload();
+    },
+    [api, reload],
+  );
+
+  // Whether a "Paste here" into `dest` is allowed given the current clipboard.
+  const canPasteHere = useCallback(
+    (dest: string | null) => !!clipboard && (!clipboard.folder || canPasteInto(dest, clipboard.folder.id, parentOf)),
+    [clipboard, parentOf],
+  );
+
+  // Keyboard: Ctrl/Cmd+C/X copy/cut the selected files, +V pastes into the
+  // selected folder, F2 renames a single selection, Del trashes the selection.
+  // A sibling of the image-paste effect; ignores typing in inputs/search/rename.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (loading || readOnly) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (mod && k === 'c') {
+        if (selectedFiles.length) setClipboard({ op: 'copy', files: selectedFiles, folder: null });
+      } else if (mod && k === 'x') {
+        if (selectedFiles.length) setClipboard({ op: 'cut', files: selectedFiles, folder: null });
+      } else if (mod && k === 'v') {
+        if (clipboard) {
+          e.preventDefault();
+          void doPaste(selectedFolderId);
+        }
+      } else if (e.key === 'F2') {
+        if (selectedFiles.length === 1) {
+          e.preventDefault();
+          setRenameTarget(selectedFiles[0]);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedFiles.length) {
+          e.preventDefault();
+          setDeleteTargets(selectedFiles);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [loading, readOnly, selectedFiles, selectedFolderId, clipboard, doPaste]);
+
   const saveDetails = useCallback(
     async (file: ApiDatabankFile, patch: { description: string | null; tags: string[] }) => {
       const updated = await api.updateFile(file.id, patch);
@@ -855,6 +1036,8 @@ export function DatabankExplorerV2({
     ({ node, style, dragHandle }: NodeRendererProps<FolderNode>) => {
       const selected = node.id === selectedFolderId;
       return (
+        <ContextMenu.Root>
+          <ContextMenu.Trigger asChild>
         <div
           ref={dragHandle}
           style={{
@@ -935,9 +1118,56 @@ export function DatabankExplorerV2({
             </button>
           ) : null}
         </div>
+          </ContextMenu.Trigger>
+          {!readOnly ? (
+            <ContextMenu.Portal>
+              <ContextMenu.Content className="dbx-menu" collisionPadding={8}>
+                <ContextMenu.Item
+                  className="dbx-item"
+                  onSelect={() => setClipboard({ op: 'copy', files: [], folder: { id: node.id, name: node.data.name } })}
+                >
+                  <Copy size={15} /> Copy
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="dbx-item"
+                  onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: node.id, name: node.data.name } })}
+                >
+                  <Scissors size={15} /> Cut
+                </ContextMenu.Item>
+                <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(node.id)} onSelect={() => void doPaste(node.id)}>
+                  <ClipboardPaste size={15} /> Paste here
+                </ContextMenu.Item>
+                <ContextMenu.Separator className="dbx-sep" />
+                <ContextMenu.Item
+                  className="dbx-item"
+                  onSelect={() => {
+                    setSelectedFolderId(node.id);
+                    setNewFolderOpen(true);
+                  }}
+                >
+                  <FolderPlus size={15} /> New subfolder…
+                </ContextMenu.Item>
+                <ContextMenu.Item className="dbx-item" onSelect={() => node.edit()}>
+                  <Pencil size={15} /> Rename…
+                </ContextMenu.Item>
+                <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: node.id, name: node.data.name })}>
+                  <FolderInput size={15} /> Move to…
+                </ContextMenu.Item>
+                <ContextMenu.Separator className="dbx-sep" />
+                <ContextMenu.Item
+                  className="dbx-item"
+                  data-danger=""
+                  onSelect={() => setFolderDelete({ id: node.id, name: node.data.name })}
+                >
+                  <Trash2 size={15} /> Delete
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          ) : null}
+        </ContextMenu.Root>
       );
     },
-    [selectedFolderId, readOnly],
+    [selectedFolderId, readOnly, canPasteHere, doPaste],
   );
 
   const showTable = rows.length > 0 && !(isSearching ? searchError : loading);
@@ -1147,7 +1377,7 @@ export function DatabankExplorerV2({
                 <Loader2 size={13} className="animate-spin" />
                 {progress
                   ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
-                  : 'Working…'}
+                  : activity ?? 'Working…'}
               </div>
               {progress ? (
                 <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
@@ -1160,7 +1390,12 @@ export function DatabankExplorerV2({
                     }}
                   />
                 </div>
-              ) : null}
+              ) : (
+                // Indeterminate sweep for an op with no byte progress (paste / folder delete).
+                <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: '35%', background: accent, borderRadius: 999, animation: 'sos-databank-sweep 1.1s ease-in-out infinite' }} />
+                </div>
+              )}
             </div>
           ) : null}
 
@@ -1294,6 +1529,12 @@ export function DatabankExplorerV2({
               <button type="button" onClick={() => void downloadAll(selectedFiles)} style={barBtn}>
                 <Download size={14} /> Download all
               </button>
+              <button type="button" onClick={() => setClipboard({ op: 'copy', files: selectedFiles, folder: null })} style={barBtn}>
+                <Copy size={14} /> Copy
+              </button>
+              <button type="button" onClick={() => setClipboard({ op: 'cut', files: selectedFiles, folder: null })} style={barBtn}>
+                <Scissors size={14} /> Cut
+              </button>
               <button type="button" onClick={() => setMoveTargets(selectedFiles)} style={barBtn}>
                 <FolderInput size={14} /> Move…
               </button>
@@ -1315,6 +1556,8 @@ export function DatabankExplorerV2({
           >
             {/* Table (folder view AND search results — one component, two data sources). */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <ContextMenu.Root>
+                <ContextMenu.Trigger asChild>
               <div
                 ref={scrollRef}
                 style={{
@@ -1412,6 +1655,7 @@ export function DatabankExplorerV2({
                             <ContextMenu.Trigger asChild>
                               <div
                                 onClick={() => setDetailsFile(file)}
+                                onContextMenu={(e) => e.stopPropagation()}
                                 style={{
                                   position: 'absolute',
                                   top: vi.start,
@@ -1497,6 +1741,19 @@ export function DatabankExplorerV2({
                                 </ContextMenu.Item>
                                 {!readOnly ? (
                                   <>
+                                    <ContextMenu.Item
+                                      className="dbx-item"
+                                      onSelect={() => setClipboard({ op: 'copy', files: isSelected && selectionCount > 1 ? selectedFiles : [file], folder: null })}
+                                    >
+                                      <Copy size={15} /> Copy
+                                    </ContextMenu.Item>
+                                    <ContextMenu.Item
+                                      className="dbx-item"
+                                      onSelect={() => setClipboard({ op: 'cut', files: isSelected && selectionCount > 1 ? selectedFiles : [file], folder: null })}
+                                    >
+                                      <Scissors size={15} /> Cut
+                                    </ContextMenu.Item>
+                                    <ContextMenu.Separator className="dbx-sep" />
                                     <ContextMenu.Item className="dbx-item" onSelect={() => setRenameTarget(file)}>
                                       <Pencil size={15} /> Rename…
                                     </ContextMenu.Item>
@@ -1518,6 +1775,28 @@ export function DatabankExplorerV2({
                   </div>
                 )}
               </div>
+                </ContextMenu.Trigger>
+                {!readOnly && !isSearching ? (
+                  <ContextMenu.Portal>
+                    <ContextMenu.Content className="dbx-menu" collisionPadding={8}>
+                      <ContextMenu.Item
+                        className="dbx-item"
+                        disabled={!canPasteHere(selectedFolderId)}
+                        onSelect={() => void doPaste(selectedFolderId)}
+                      >
+                        <ClipboardPaste size={15} /> Paste here
+                      </ContextMenu.Item>
+                      <ContextMenu.Separator className="dbx-sep" />
+                      <ContextMenu.Item className="dbx-item" onSelect={() => setNewFolderOpen(true)}>
+                        <FolderPlus size={15} /> New folder…
+                      </ContextMenu.Item>
+                      <ContextMenu.Item className="dbx-item" onSelect={() => fileInputRef.current?.click()}>
+                        <Upload size={15} /> Upload files…
+                      </ContextMenu.Item>
+                    </ContextMenu.Content>
+                  </ContextMenu.Portal>
+                ) : null}
+              </ContextMenu.Root>
 
               {/* "Load more" (search mode) — appends the next page to the table. */}
               {isSearching && showTable && searchResults.length < searchTotal ? (
@@ -1600,15 +1879,42 @@ export function DatabankExplorerV2({
       ) : null}
       {moveTargets ? (
         <MoveDialog
-          targets={moveTargets}
+          noun={moveTargets.length === 1 ? `“${moveTargets[0].fileName}”` : `${moveTargets.length} files`}
           options={folderOptions}
           rootLabel={scopeRootLabel}
           onClose={() => setMoveTargets(null)}
-          onSubmit={doMove}
+          onSubmit={(folderId) => doMove(moveTargets, folderId)}
+        />
+      ) : null}
+      {folderMove ? (
+        <MoveDialog
+          noun={`“${folderMove.name}”`}
+          options={folderOptions}
+          rootLabel={scopeRootLabel}
+          disabledIds={descendantsWithSelf(folderMove.id)}
+          onClose={() => setFolderMove(null)}
+          onSubmit={(folderId) => doFolderMove(folderMove.id, folderId)}
         />
       ) : null}
       {deleteTargets ? (
-        <DeleteDialog targets={deleteTargets} onClose={() => setDeleteTargets(null)} onSubmit={doDelete} />
+        <DeleteDialog
+          title={deleteTargets.length === 1 ? 'Delete file' : 'Delete files'}
+          body={`Delete ${
+            deleteTargets.length === 1 ? `“${deleteTargets[0].fileName}”` : `${deleteTargets.length} files`
+          }? This moves ${deleteTargets.length === 1 ? 'it' : 'them'} to Trash, where you can restore ${
+            deleteTargets.length === 1 ? 'it' : 'them'
+          }.`}
+          onClose={() => setDeleteTargets(null)}
+          onConfirm={() => doDelete(deleteTargets)}
+        />
+      ) : null}
+      {folderDelete ? (
+        <DeleteDialog
+          title="Delete folder"
+          body={`Delete “${folderDelete.name}” and everything inside it? This moves it to Trash, where you can restore it.`}
+          onClose={() => setFolderDelete(null)}
+          onConfirm={() => doFolderDelete(folderDelete.id)}
+        />
       ) : null}
       {trashOpen ? (
         <TrashDialog api={api} scope={trashScope} onClose={() => setTrashOpen(false)} reload={reload} />
@@ -1991,17 +2297,20 @@ function RenameDialog({
 }
 
 function MoveDialog({
-  targets,
+  noun,
   options,
   rootLabel,
+  disabledIds,
   onClose,
   onSubmit,
 }: {
-  targets: ApiDatabankFile[];
+  noun: string;
   options: FolderOption[];
   rootLabel: string;
+  /** Folder ids that can't be a destination (a folder's self + descendants). */
+  disabledIds?: Set<string>;
   onClose: () => void;
-  onSubmit: (targets: ApiDatabankFile[], folderId: string | null) => Promise<void>;
+  onSubmit: (folderId: string | null) => Promise<void>;
 }) {
   // '' encodes the databank root (folderId = null).
   const [value, setValue] = useState('');
@@ -2013,15 +2322,13 @@ function MoveDialog({
     setBusy(true);
     setErr(null);
     try {
-      await onSubmit(targets, value === '' ? null : value);
+      await onSubmit(value === '' ? null : value);
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Move failed');
       setBusy(false);
     }
   };
-
-  const noun = targets.length === 1 ? `“${targets[0].fileName}”` : `${targets.length} files`;
 
   return (
     <DialogShell
@@ -2047,7 +2354,7 @@ function MoveDialog({
       >
         <option value="">{rootLabel} (root)</option>
         {options.map((o) => (
-          <option key={o.id ?? 'root'} value={o.id ?? ''}>
+          <option key={o.id ?? 'root'} value={o.id ?? ''} disabled={!!o.id && !!disabledIds?.has(o.id)}>
             {`${'   '.repeat(o.depth)}${o.depth ? '↳ ' : ''}${o.label}`}
           </option>
         ))}
@@ -2058,13 +2365,17 @@ function MoveDialog({
 }
 
 function DeleteDialog({
-  targets,
+  title,
+  body,
+  confirmLabel = 'Delete',
   onClose,
-  onSubmit,
+  onConfirm,
 }: {
-  targets: ApiDatabankFile[];
+  title: string;
+  body: string;
+  confirmLabel?: string;
   onClose: () => void;
-  onSubmit: (targets: ApiDatabankFile[]) => Promise<void>;
+  onConfirm: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2074,7 +2385,7 @@ function DeleteDialog({
     setBusy(true);
     setErr(null);
     try {
-      await onSubmit(targets);
+      await onConfirm();
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Delete failed');
@@ -2082,11 +2393,9 @@ function DeleteDialog({
     }
   };
 
-  const noun = targets.length === 1 ? `“${targets[0].fileName}”` : `${targets.length} files`;
-
   return (
     <DialogShell
-      title={targets.length === 1 ? 'Delete file' : 'Delete files'}
+      title={title}
       onClose={onClose}
       footer={
         <>
@@ -2099,14 +2408,12 @@ function DeleteDialog({
             disabled={busy}
             style={{ ...primaryBtn, background: danger, borderColor: danger, opacity: busy ? 0.6 : 1 }}
           >
-            {busy ? 'Deleting…' : 'Delete'}
+            {busy ? 'Deleting…' : confirmLabel}
           </button>
         </>
       }
     >
-      <div style={{ fontSize: 13.5, color: primary }}>
-        Delete {noun}? This cannot be undone.
-      </div>
+      <div style={{ fontSize: 13.5, color: primary }}>{body}</div>
       {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
     </DialogShell>
   );

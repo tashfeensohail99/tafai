@@ -35,6 +35,7 @@ import {
   CommitUploadDto,
   CommitVersionDto,
   CopyFileDto,
+  CopyFolderDto,
   CreateFolderDto,
   EnsureFolderPathsDto,
   InitVersionDto,
@@ -345,6 +346,17 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.copyFile(fileId, dto, user);
+  }
+
+  @Post('folders/:folderId/copy')
+  @RequirePermissions(WRITE)
+  @Audit({ action: 'DATABANK_FOLDER_COPIED', entityType: 'DatabankFolder', category: 'MUTATION', severity: 'MEDIUM' })
+  copyFolder(
+    @Param('folderId', ParseUUIDPipe) folderId: string,
+    @Body() dto: CopyFolderDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.copyFolder(folderId, dto, user);
   }
 
   @Delete('files/:fileId')

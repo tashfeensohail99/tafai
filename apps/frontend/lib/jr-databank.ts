@@ -9,6 +9,7 @@ import type {
   ApiDatabankFile,
   ApiDatabankFolder,
   ApiDatabankTree,
+  CopyFolderResult,
   DatabankFileSource,
   DatabankSearchParams,
   DatabankSearchResult,
@@ -306,6 +307,18 @@ export function copyJrDatabankFile(
   opts: { targetClientId?: string; targetFolderId?: string | null } = {},
 ): Promise<ApiDatabankFile> {
   return apiFetch<ApiDatabankFile>(`/jr/databank/files/${fileId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+    cache: 'no-store',
+  });
+}
+
+export function copyJrDatabankFolder(
+  folderId: string,
+  opts: { targetClientId?: string; targetFolderId?: string | null } = {},
+): Promise<CopyFolderResult> {
+  return apiFetch<CopyFolderResult>(`/jr/databank/folders/${folderId}/copy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),

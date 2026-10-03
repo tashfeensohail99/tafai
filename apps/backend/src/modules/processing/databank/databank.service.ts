@@ -17,6 +17,7 @@ import {
   CommitUploadDto,
   CommitVersionDto,
   CopyFileDto,
+  CopyFolderDto,
   CreateFolderDto,
   EnsureFolderPathsDto,
   PresignUploadDto,
@@ -29,6 +30,9 @@ import { FolderPathError, FolderPlan, planFolderPaths, splitFolderPath } from '.
  *  queue behind a big first drop, which inserts thousands of rows ~90 ms away
  *  in the Seoul DB (Prisma's 5 s default would abort the waiter). */
 const FOLDER_TXN = { timeout: 30_000 };
+
+/** Cycle-guard wording for a folder COPY (assertNoCycle defaults to move wording). */
+const COPY_CYCLE_MSG = "A folder can't be copied into itself or one of its own subfolders";
 
 
 /** Split a search box value into words (max 5). EVERY word must match
@@ -97,6 +101,15 @@ export class DatabankService {
   /** A single server-side CopyObject is capped at 5 GiB on S3-compatible
    *  storage (R2 included); bigger copies need multipart UploadPartCopy. */
   private static readonly COPY_MAX_BYTES = 5 * 1024 * 1024 * 1024;
+
+  /** A recursive folder copy runs SYNCHRONOUSLY inside one request and copies
+   *  files one at a time (~200 ms each server-side), so it must finish inside
+   *  Node's request timeout and the edge timeout. These ceilings keep the whole
+   *  copy well under that budget; a bigger tree is refused up front with advice
+   *  to copy subfolders individually (a background-job path is a future follow-up). */
+  private static readonly MAX_COPY_FILES = 1000;
+  private static readonly MAX_COPY_FOLDERS = 2000;
+  private static readonly MAX_COPY_DEPTH = 50;
 
   private readonly log = new Logger(DatabankService.name);
 
@@ -242,6 +255,19 @@ export class DatabankService {
     if (!file) throw new NotFoundException('File not found');
     await this.authorizeRow(file, user, 'read');
     return file;
+  }
+
+  /** Load a LIVE folder for a READ-gated operation (any officer may read any
+   *  client, like loadFileForRead) — used by copyFolder so a folder copy is
+   *  gated exactly like a file copy: READ the source, WRITE the destination.
+   *  NOT loadFolder, which is WRITE-gated and would make folder-copy stricter. */
+  private async loadFolderForRead(folderId: string, user: RequestUser) {
+    const folder = await this.prisma.databankFolder.findFirst({
+      where: { id: folderId, deletedAt: null },
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+    await this.authorizeRow(folder, user, 'read');
+    return folder;
   }
 
   /** A caller-supplied parent folderId must be live and in the SAME scope
@@ -1485,34 +1511,56 @@ export class DatabankService {
     // A single server-side CopyObject is capped at 5 GiB on S3-compatible
     // storage (R2 included) — a bigger object needs a multipart UploadPartCopy
     // (planned). Refuse clearly up front instead of a storage 400 mid-request.
-    const sizeBytes = Number(source.fileSizeBytes ?? 0);
-    if (sizeBytes > DatabankService.COPY_MAX_BYTES) {
+    if (Number(source.fileSizeBytes ?? 0) > DatabankService.COPY_MAX_BYTES) {
       throw new BadRequestException(
         'Files larger than 5 GB can’t be copied yet — download and re-upload it instead.',
       );
     }
 
-    // Server-side copy: the bytes are duplicated inside storage and never pass
-    // through the backend, so duplicating even a multi-GB file uses no RAM.
+    return this.copyOneFile(source, scope, targetFolder, storageFolder, user);
+  }
+
+  /**
+   * Duplicate ONE file's bytes to a fresh storage key and insert its row. The
+   * byte copy is a server-side CopyObject (never through the backend, so no
+   * RAM), and the row insert runs in its OWN short transaction that takes a
+   * FOR SHARE lock on the live destination folder (lockLiveDestinationFolder):
+   * the slow copy widens the window in which the folder could be trashed, so
+   * without the lock the live copy could be stranded inside a trashed folder and
+   * destroyed by the sweeper's FK cascade — it falls back to the root instead.
+   *
+   * CONTRACT: callers MUST have already READ-authorized the source,
+   * WRITE-authorized `scope` (the destination) and size-checked the file
+   * (≤ COPY_MAX_BYTES). Kept OUTSIDE any scope-wide advisory lock so a bulk
+   * copyFolder never holds the folder-structure lock across slow byte copies.
+   */
+  private async copyOneFile(
+    source: {
+      id: string;
+      storageKey: string;
+      fileName: string;
+      mimeType: string | null;
+      fileSizeBytes: bigint | null;
+      sha256: string | null;
+    },
+    scope: { clientId: string | null; ownerUserId: string | null },
+    destFolderId: string | null,
+    storageFolder: string,
+    user: RequestUser,
+  ) {
     const uploaded = await this.storage.copyObject(
       source.storageKey,
       storageFolder,
-      sizeBytes,
+      Number(source.fileSizeBytes ?? 0),
       source.mimeType ?? 'application/octet-stream',
       source.fileName,
     );
-
     return this.prisma.$transaction(async (tx) => {
-      // Serialize against a concurrent subtree delete/purge of the destination
-      // (see lockLiveDestinationFolder). The slow server-side copyObject above
-      // widens the window in which the folder could be trashed, so without this
-      // the live copy could be stranded inside a trashed folder and later
-      // destroyed by the sweeper's FK cascade. Land at the root if so.
-      const dest = await this.lockLiveDestinationFolder(tx, targetFolder, scope);
+      const dest = await this.lockLiveDestinationFolder(tx, destFolderId, scope);
       return tx.databankFile.create({
         data: {
-          clientId: targetClientId,
-          ownerUserId: targetOwnerUserId,
+          clientId: scope.clientId,
+          ownerUserId: scope.ownerUserId,
           folderId: dest,
           fileName: source.fileName,
           storageKey: uploaded.key,
@@ -1526,6 +1574,188 @@ export class DatabankService {
         select: this.fileSelect,
       });
     }, FOLDER_TXN);
+  }
+
+  /**
+   * Recursively copy a folder's whole LIVE subtree — every descendant folder is
+   * recreated and every live file is byte-copied (server-side) into the new
+   * tree. Gated like copyFile: READ the source, WRITE the destination (the same
+   * scope, another client, or a personal area). Two phases:
+   *   1. ONE fast LOCKED transaction recreates the folder skeleton (cycle guard,
+   *      "(2)" suffix on a root-name clash, a belt re-count under the lock);
+   *   2. file bytes + rows are copied OUTSIDE the lock, one short transaction
+   *      per file, so the structure lock is never held across slow byte copies
+   *      and each file row is relocate-on-trash safe (copyOneFile).
+   * Files over 5 GB, or beyond the file ceiling, are SKIPPED and reported rather
+   * than aborting the batch. A tree beyond the folder/depth ceilings is refused
+   * up front, before anything is written.
+   */
+  async copyFolder(folderId: string, dto: CopyFolderDto, user: RequestUser) {
+    const source = await this.loadFolderForRead(folderId, user);
+
+    // Resolve the target scope ONCE (explicit client wins; else the source's own
+    // scope — client → same client, personal → same owner).
+    let targetClientId: string | null = null;
+    let targetOwnerUserId: string | null = null;
+    if (dto.targetClientId) targetClientId = dto.targetClientId;
+    else if (source.clientId) targetClientId = source.clientId;
+    else targetOwnerUserId = source.ownerUserId;
+
+    // A copy CREATES rows in the target — gate on WRITE of the destination,
+    // BEFORE reading the subtree or writing anything.
+    if (targetClientId) await this.assertClientWriteAccess(targetClientId, user);
+    else if (targetOwnerUserId) this.assertPersonalAccess(targetOwnerUserId, user);
+    else throw new BadRequestException('The folder to copy has no client or owner.');
+
+    const scope = { clientId: targetClientId, ownerUserId: targetOwnerUserId };
+    const sourceScope = { clientId: source.clientId, ownerUserId: source.ownerUserId };
+    const sameScope =
+      scope.clientId === sourceScope.clientId && scope.ownerUserId === sourceScope.ownerUserId;
+    const storageFolder = targetClientId
+      ? `databank/clients/${targetClientId}`
+      : `databank/users/${targetOwnerUserId}`;
+
+    // Ceilings — fail fast, UNLOCKED, before any write. A too-big tree is refused
+    // with advice to copy its subfolders individually.
+    const ceilingIds = await this.collectSubtree(source.id);
+    const ceilingRows = await this.prisma.databankFolder.findMany({
+      where: { id: { in: ceilingIds }, ...sourceScope },
+      select: { id: true, parentFolderId: true },
+    });
+    const ceilingFileCount = await this.prisma.databankFile.count({
+      where: { folderId: { in: ceilingIds }, deletedAt: null, ...sourceScope },
+    });
+    const parentOf = new Map(ceilingRows.map((f) => [f.id, f.parentFolderId]));
+    let maxDepth = 1;
+    for (const f of ceilingRows) {
+      let depth = 1;
+      let cur: string | null | undefined = f.id;
+      while (cur && cur !== source.id && depth <= DatabankService.MAX_COPY_DEPTH) {
+        cur = parentOf.get(cur);
+        depth += 1;
+      }
+      if (depth > maxDepth) maxDepth = depth;
+    }
+    if (
+      ceilingIds.length > DatabankService.MAX_COPY_FOLDERS ||
+      ceilingFileCount > DatabankService.MAX_COPY_FILES ||
+      maxDepth > DatabankService.MAX_COPY_DEPTH
+    ) {
+      throw new BadRequestException(
+        'This folder is too large to copy in one operation — copy its subfolders individually.',
+      );
+    }
+
+    // Phase 1 — recreate the folder skeleton in ONE fast locked transaction.
+    const { idMap, rootNewId, folderIds, copiedRoot } = await this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      // Copying within one scope: re-read the source under the lock so a
+      // concurrent delete of it is seen before we build on it.
+      if (sameScope) await this.reloadFolder(tx, source.id);
+      const targetParent = await this.assertFolderInScope(dto.targetFolderId, scope, tx);
+      await this.assertNoCycle(source.id, targetParent, tx, COPY_CYCLE_MSG);
+
+      // Authoritative subtree snapshot UNDER the lock — the ONLY enumeration
+      // Phase 2 uses. Nothing can be added to the subtree after this read.
+      const ids = await this.collectSubtree(source.id, tx);
+      // Belt: the subtree may have grown between the unlocked ceiling check and
+      // here — rolls back cleanly (nothing committed yet).
+      const lockedFileCount = await tx.databankFile.count({
+        where: { folderId: { in: ids }, deletedAt: null, ...sourceScope },
+      });
+      if (lockedFileCount > DatabankService.MAX_COPY_FILES) {
+        throw new BadRequestException(
+          'This folder is too large to copy in one operation — copy its subfolders individually.',
+        );
+      }
+
+      const rows = await tx.databankFolder.findMany({
+        where: { id: { in: ids }, ...sourceScope },
+        select: { id: true, name: true, parentFolderId: true },
+      });
+      const srcParentOf = new Map(rows.map((r) => [r.id, r.parentFolderId]));
+      const nameOf = new Map(rows.map((r) => [r.id, r.name]));
+
+      // Depth-sort parents-first (collectSubtree gives no order) so every
+      // parent's NEW id exists before its children are created.
+      const depthOf = (id: string): number => {
+        let d = 0;
+        let cur: string | null | undefined = id;
+        while (cur && cur !== source.id) {
+          cur = srcParentOf.get(cur) ?? null;
+          d += 1;
+        }
+        return d;
+      };
+      const ordered = [...ids].sort((a, b) => depthOf(a) - depthOf(b));
+      const map = new Map<string, string>();
+      for (const id of ordered) map.set(id, randomUUID());
+
+      // The root's name may clash with a live sibling in the destination; the
+      // live source IS a genuine sibling, so excludeId is undefined → "(2)".
+      const rootName = await this.uniqueFolderName(scope, targetParent, source.name, undefined, tx);
+
+      const data = ordered.map((id) => {
+        const srcParent = srcParentOf.get(id) ?? null;
+        const newParent =
+          id === source.id ? targetParent : srcParent ? map.get(srcParent) ?? targetParent : targetParent;
+        return {
+          id: map.get(id)!,
+          clientId: scope.clientId,
+          ownerUserId: scope.ownerUserId,
+          parentFolderId: newParent,
+          name: id === source.id ? rootName : nameOf.get(id) ?? 'Untitled',
+          createdByUserId: user.id,
+        };
+      });
+      for (let i = 0; i < data.length; i += 1000) {
+        // eslint-disable-next-line no-await-in-loop
+        await tx.databankFolder.createMany({ data: data.slice(i, i + 1000) });
+      }
+
+      const newRootId = map.get(source.id)!;
+      const root = await tx.databankFolder.findUniqueOrThrow({
+        where: { id: newRootId },
+        select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
+      });
+      return { idMap: map, rootNewId: newRootId, folderIds: ids, copiedRoot: root };
+    }, FOLDER_TXN);
+
+    // Phase 2 — copy file bytes + rows OUTSIDE the lock, SEQUENTIALLY. take:MAX+1
+    // catches a subtree that grew past the ceiling after the snapshot (reported,
+    // never stranded).
+    const srcFiles = await this.prisma.databankFile.findMany({
+      where: { folderId: { in: folderIds }, deletedAt: null, ...sourceScope },
+      select: {
+        id: true, folderId: true, fileName: true, storageKey: true,
+        mimeType: true, fileSizeBytes: true, sha256: true,
+      },
+      take: DatabankService.MAX_COPY_FILES + 1,
+    });
+    const skipped: Array<{ fileName: string; reason: 'TOO_LARGE' | 'ERROR' | 'LIMIT'; sizeBytes?: number }> = [];
+    let copiedFiles = 0;
+    let done = 0;
+    for (const file of srcFiles) {
+      if (done >= DatabankService.MAX_COPY_FILES) {
+        skipped.push({ fileName: file.fileName, reason: 'LIMIT' });
+        continue;
+      }
+      done += 1;
+      const destFolderId = (file.folderId && idMap.get(file.folderId)) || rootNewId;
+      if (Number(file.fileSizeBytes ?? 0) > DatabankService.COPY_MAX_BYTES) {
+        skipped.push({ fileName: file.fileName, reason: 'TOO_LARGE', sizeBytes: Number(file.fileSizeBytes) });
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await this.copyOneFile(file, scope, destFolderId, storageFolder, user);
+        copiedFiles += 1;
+      } catch {
+        skipped.push({ fileName: file.fileName, reason: 'ERROR' });
+      }
+    }
+
+    return { folder: copiedRoot, copiedFolders: folderIds.length, copiedFiles, skipped };
   }
 
   /** Soft-delete a single file (recoverable; the object stays in storage). */
@@ -2510,15 +2740,19 @@ export class DatabankService {
     return name;
   }
 
-  /** Reject a move that would put a folder inside its own subtree (a cycle). */
+  /** Reject a move/copy that would put a folder inside its own subtree (a
+   *  cycle). `message` lets the caller word the error for its operation (copy
+   *  vs move); both throw sites use it so even a direct self-target is worded
+   *  correctly. */
   private async assertNoCycle(
     folderId: string,
     newParentId: string | null,
     db: Prisma.TransactionClient = this.prisma,
+    message = 'A folder cannot be moved into its own subtree',
   ): Promise<void> {
     if (!newParentId) return; // moving to root is always safe
     if (newParentId === folderId) {
-      throw new BadRequestException('A folder cannot be moved into itself');
+      throw new BadRequestException(message);
     }
     // Walk the new parent's ancestor chain in ONE recursive query (was one
     // query per level — ~90 ms each to the Seoul DB). UNION de-duplicates, so
@@ -2533,7 +2767,7 @@ export class DatabankService {
       )
       SELECT "id" FROM anc WHERE "id" = ${folderId} LIMIT 1`;
     if (hit.length) {
-      throw new BadRequestException('A folder cannot be moved into its own subtree');
+      throw new BadRequestException(message);
     }
   }
 

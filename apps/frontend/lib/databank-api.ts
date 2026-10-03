@@ -2,6 +2,7 @@
 
 import {
   copyDatabankFile,
+  copyDatabankFolder,
   createDatabankFolder,
   createPersonalDatabankFolder,
   databankVersionSignedUrl,
@@ -34,6 +35,7 @@ import {
   type ApiDatabankFile,
   type ApiDatabankFolder,
   type ApiDatabankTree,
+  type CopyFolderResult,
   type DatabankFileSource,
   type DatabankSearchParams,
   type DatabankSearchResult,
@@ -43,6 +45,7 @@ import {
 } from './processing';
 import {
   copyJrDatabankFile,
+  copyJrDatabankFolder,
   createJrDatabankFolder,
   createJrPersonalFolder,
   deleteJrDatabankFile,
@@ -145,6 +148,10 @@ export interface DatabankApi {
   search(params: DatabankSearchParams): Promise<DatabankSearchResult>;
   moveFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile>;
   copyFile(fileId: string, opts?: { targetClientId?: string; targetFolderId?: string | null }): Promise<ApiDatabankFile>;
+  /** Recursively copy a folder's whole subtree. Returns the new root folder plus
+   *  counts and any skipped files — so the paste flow refreshes via the tree
+   *  refetch, not a local row patch. */
+  copyFolder(folderId: string, opts?: { targetClientId?: string; targetFolderId?: string | null }): Promise<CopyFolderResult>;
   deleteFile(fileId: string): Promise<unknown>;
 
   // ---- Trash (P3-1) — distinct names from the soft-delete deleteFile/deleteFolder.
@@ -197,6 +204,7 @@ export const processingDatabankApi: DatabankApi = {
   search: searchDatabankFiles,
   moveFile: moveDatabankFile,
   copyFile: copyDatabankFile,
+  copyFolder: copyDatabankFolder,
   deleteFile: deleteDatabankFile,
   fetchTrash: fetchDatabankTrash,
   restoreTrashedFolder: restoreDatabankFolder,
@@ -234,6 +242,7 @@ export const jrDatabankApi: DatabankApi = {
   search: searchJrDatabankFiles,
   moveFile: moveJrDatabankFile,
   copyFile: copyJrDatabankFile,
+  copyFolder: copyJrDatabankFolder,
   deleteFile: deleteJrDatabankFile,
   fetchTrash: fetchJrDatabankTrash,
   restoreTrashedFolder: restoreJrDatabankFolder,

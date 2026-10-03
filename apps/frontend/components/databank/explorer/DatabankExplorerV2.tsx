@@ -57,6 +57,7 @@ import { dataScopeOf } from '@/lib/databank-upload/keys';
 import { settlePaste, type PasteJob } from '@/lib/databank-explorer/settle-paste';
 import { canPasteInto } from '@/lib/databank-explorer/paste-target';
 import { previewKind } from '@/lib/databank-explorer/preview-kind';
+import { DocxView, XlsxView } from '@/components/databank/explorer/OfficePreview';
 import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
 import type { UploadDest } from '@/lib/databank-upload-browser';
 import { UploadResumeBanner } from '@/components/databank/UploadResumeBanner';
@@ -2263,6 +2264,10 @@ function PreviewModal({
               <video src={url} controls style={{ maxWidth: '100%', maxHeight: '100%' }} />
             ) : kind === 'audio' ? (
               <audio src={url} controls style={{ width: '90%' }} />
+            ) : kind === 'docx' ? (
+              <DocxView url={url} onDownload={onDownload} />
+            ) : kind === 'xlsx' ? (
+              <XlsxView url={url} onDownload={onDownload} />
             ) : (
               <div style={{ textAlign: 'center', color: muted, padding: 24 }}>
                 <FileIcon size={30} />

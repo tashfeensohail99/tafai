@@ -530,17 +530,25 @@ export function DatabankExplorerV2({
     [makeFolder, putFile, selectedFolderId, reload, readOnly, v2, uploadDest],
   );
 
-  // Clipboard paste of an image while the explorer is mounted.
+  // Paste files from the OS clipboard → upload into the current folder. A
+  // pasted screenshot keeps the CLIPBOARD origin; any other copied file (PDF,
+  // Word, …) uploads normally. (Folders can't be pasted — browsers only expose
+  // those via drag-and-drop, which the pane already handles.)
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       // canWrite defaults to true until the tree loads — don't upload into a
       // databank we haven't confirmed we may write to.
       if (loading || readOnly) return;
-      const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
-      if (imgs.length) {
-        e.preventDefault();
-        void doUpload(imgs, 'CLIPBOARD');
-      }
+      // Only OS-clipboard FILES trigger an upload. An in-app Copy/Cut sets no
+      // clipboard files, so an internal Ctrl+V paste lands here with nothing to
+      // do and is handled by the keyboard handler instead — no conflict.
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (!files.length) return;
+      e.preventDefault();
+      const imgs = files.filter((f) => f.type.startsWith('image/'));
+      const others = files.filter((f) => !f.type.startsWith('image/'));
+      if (imgs.length) void doUpload(imgs, 'CLIPBOARD');
+      if (others.length) void doUpload(others, 'UPLOAD');
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);

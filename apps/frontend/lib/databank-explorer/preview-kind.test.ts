@@ -23,8 +23,15 @@ test('previewKind: text-like renders in an iframe', () => {
   assert.equal(previewKind('application/json'), 'text');
 });
 
-test('previewKind: unknown / office / missing → none (Download fallback)', () => {
-  assert.equal(previewKind('application/vnd.openxmlformats-officedocument.wordprocessingml.document'), 'none');
+test('previewKind: modern Office (OOXML) render in-browser', () => {
+  assert.equal(previewKind('application/vnd.openxmlformats-officedocument.wordprocessingml.document'), 'docx');
+  assert.equal(previewKind('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'), 'xlsx');
+});
+
+test('previewKind: unknown / legacy-binary Office / missing → none (Download fallback)', () => {
+  assert.equal(previewKind('application/msword'), 'none'); // legacy .doc — no reliable browser viewer
+  assert.equal(previewKind('application/vnd.ms-excel'), 'none'); // legacy .xls
+  assert.equal(previewKind('application/vnd.openxmlformats-officedocument.presentationml.presentation'), 'none'); // .pptx
   assert.equal(previewKind('application/zip'), 'none');
   assert.equal(previewKind(null), 'none');
   assert.equal(previewKind(undefined), 'none');

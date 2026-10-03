@@ -2456,6 +2456,28 @@ export function copyDatabankFile(
   });
 }
 
+/** The result of a recursive folder copy: the new root folder, how much was
+ *  duplicated, and any files the backend skipped (too large / over the ceiling
+ *  / an individual failure) rather than aborting the whole copy. */
+export type CopyFolderResult = {
+  folder: ApiDatabankFolder;
+  copiedFolders: number;
+  copiedFiles: number;
+  skipped: Array<{ fileName: string; reason: 'TOO_LARGE' | 'ERROR' | 'LIMIT'; sizeBytes?: number }>;
+};
+
+export function copyDatabankFolder(
+  folderId: string,
+  opts: { targetClientId?: string; targetFolderId?: string | null } = {},
+): Promise<CopyFolderResult> {
+  return apiFetch<CopyFolderResult>(`/processing/databank/folders/${folderId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+    cache: 'no-store',
+  });
+}
+
 export function deleteDatabankFile(fileId: string): Promise<{ id: string; deleted: boolean }> {
   return apiFetch<{ id: string; deleted: boolean }>(`/processing/databank/files/${fileId}`, {
     method: 'DELETE',

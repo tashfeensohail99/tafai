@@ -153,6 +153,7 @@ const EXPLORER_CSS = `
 .dbx-item[data-danger][data-highlighted] { background: rgba(220,38,38,0.10); }
 .dbx-sep { height: 1px; margin: 5px 4px; background: var(--sos-border, rgba(148,163,184,0.25)); }
 .dbx-item[data-disabled] { opacity: 0.45; cursor: default; }
+.dbx-hint { display: block; font-size: 11px; color: var(--sos-text-muted, #94a3b8); padding: 4px 10px 2px; user-select: none; }
 @keyframes sos-databank-sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(340%); } }
 .dbx-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.38); z-index: 70; }
 .dbx-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; background: ${surfaceSolid}; border: ${border}; border-radius: 14px; padding: 18px; z-index: 71; box-shadow: 0 24px 60px rgba(15,23,42,0.28); }
@@ -1167,6 +1168,16 @@ export function DatabankExplorerV2({
                 <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(node.id)} onSelect={() => void doPaste(node.id)}>
                   <ClipboardPaste size={15} /> Paste here
                 </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="dbx-item"
+                  onSelect={() => {
+                    setSelectedFolderId(node.id);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <Upload size={15} /> Upload files here…
+                </ContextMenu.Item>
+                <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
                 <ContextMenu.Separator className="dbx-sep" />
                 <ContextMenu.Item
                   className="dbx-item"
@@ -1827,6 +1838,7 @@ export function DatabankExplorerV2({
                       <ContextMenu.Item className="dbx-item" onSelect={() => fileInputRef.current?.click()}>
                         <Upload size={15} /> Upload files…
                       </ContextMenu.Item>
+                      <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
                     </ContextMenu.Content>
                   </ContextMenu.Portal>
                 ) : null}

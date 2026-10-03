@@ -1,7 +1,7 @@
 'use client';
 
 import { apiFetch } from './api-client';
-import { databankSearchQuery, putToStorage } from './processing';
+import { DIRECT_VERSION_MAX_BYTES, databankSearchQuery, putToStorage } from './processing';
 import type {
   ApiDatabankAssociate,
   ApiDatabankByAssociate,
@@ -451,13 +451,37 @@ export function deleteJrDatabankVersion(
   });
 }
 
-/** JR twin of `uploadDatabankFileVersion` — presign → sha256 → direct PUT →
- *  commit, via the `/jr/databank` route. Reuses the shared hasher + `putToStorage`. */
+/** JR twin of `uploadDatabankFileVersion` — files ≤ 2 GB go presign → sha256 →
+ *  direct PUT → commit via the `/jr/databank` route (shared hasher +
+ *  `putToStorage`); bigger ones delegate to the resumable multipart uploader. */
 export async function uploadJrDatabankFileVersion(
   fileId: string,
   file: File,
   onProgress?: (fraction: number) => void,
 ): Promise<ApiDatabankFile> {
+  if (file.size > DIRECT_VERSION_MAX_BYTES) {
+    const [{ uploadVersionResumable }, { makeUploadTransport }, { hashFile }] = await Promise.all([
+      import('./databank-upload/version-resumable'),
+      import('./databank-upload/transport'),
+      import('./databank-upload/hash'),
+    ]);
+    return uploadVersionResumable(
+      {
+        initVersion: (id, body) =>
+          apiFetch(`/jr/databank/files/${id}/versions/upload/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            cache: 'no-store',
+          }),
+        transport: makeUploadTransport('/jr/databank', {}),
+        hashFile,
+      },
+      fileId,
+      file,
+      { onProgress },
+    );
+  }
   const mimeType = file.type || 'application/octet-stream';
   const presigned = await presignJrDatabankVersion(fileId, {
     mimeType,

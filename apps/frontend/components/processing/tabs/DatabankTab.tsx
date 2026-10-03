@@ -60,6 +60,13 @@ function FileGlyph({ mime }: { mime: string | null }) {
 const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
+/** True when a thrown upload error is really an abort (user cancel): the XHR /
+ *  fetch reject a DOMException named "AbortError"; a status-0 ApiClientError can
+ *  also surface a cancelled request. */
+const isAbortError = (e: unknown): boolean =>
+  (e instanceof Error && e.name === 'AbortError') ||
+  (typeof e === 'object' && e !== null && (e as { status?: number }).status === 0);
+
 /**
  * The databank file explorer — the ONE explorer every portal uses. Two scopes:
  *  - a client's databank: pass `clientId`.
@@ -106,6 +113,10 @@ export function DatabankTab({
   // Live upload progress across a batch: which file (1-based `done`) of `total`,
   // its name, and this file's byte percent. null when not uploading.
   const [progress, setProgress] = useState<{ done: number; total: number; name: string; pct: number } | null>(null);
+  // Set while a cancel is being carried out (the in-flight PUT is aborted and
+  // the partial upload is rolled back) — disables the Cancel button so it reads
+  // "Cancelling…" and can't be double-clicked.
+  const [cancelling, setCancelling] = useState(false);
   // Read-only when the client is assigned to another officer: the whole team
   // can view/download any client's databank, but only the assigned officer (or
   // a manager) may modify it. The backend enforces this; here we just hide the
@@ -125,6 +136,15 @@ export function DatabankTab({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Cancel support for the direct (non-v2) upload path. `uploadAbort` aborts the
+  // in-flight PUT; `rollback` records what the batch created so a cancel can
+  // best-effort remove the partial upload (folders first — their delete cascades
+  // to nested folders + files — then any loose files). `rollingBack` guards the
+  // rollback against a double-run (break-after-loop AND the catch both firing).
+  const uploadAbort = useRef<AbortController | null>(null);
+  const rollback = useRef<{ fileIds: string[]; folderIds: string[] }>({ fileIds: [], folderIds: [] });
+  const rollingBack = useRef(false);
+
   // Scope-aware API calls — a client databank or the caller's own personal
   // area. Everything else (rename/move/copy/delete/download) is id-based and
   // identical across scopes.
@@ -141,14 +161,14 @@ export function DatabankTab({
   // (small pasted screenshots) stays on the simple multipart path so its origin
   // is recorded as CLIPBOARD.
   const putFile = useCallback(
-    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void) => {
+    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void, signal?: AbortSignal) => {
       if (src === 'CLIPBOARD') {
         return personal
           ? api.uploadPersonalFile(file, folder, 'CLIPBOARD')
           : api.uploadFile(clientId!, file, folder, 'CLIPBOARD');
       }
       const target: DatabankUploadTarget = personal ? { personal: true } : { clientId: clientId! };
-      return api.directUpload(target, file, folder, onProgress);
+      return api.directUpload(target, file, folder, onProgress, signal);
     },
     [api, personal, clientId],
   );
@@ -282,6 +302,30 @@ export function DatabankTab({
     [files, currentFolderId],
   );
 
+  // Best-effort removal of a cancelled batch's partial upload. Idempotent: it
+  // clears `rollback.current` and sets `rollingBack` so a second call (the loop
+  // break AND the catch can't both run for one batch, but belt-and-suspenders)
+  // does nothing. Folders go first — a folder soft-delete cascades to its nested
+  // folders + files, so a file already swept that way may 404 on deleteFile;
+  // Promise.allSettled swallows it.
+  const rollbackUpload = useCallback(async () => {
+    if (rollingBack.current) return;
+    rollingBack.current = true;
+    const { fileIds, folderIds } = rollback.current;
+    rollback.current = { fileIds: [], folderIds: [] };
+    await Promise.allSettled(folderIds.map((id) => api.deleteFolder(id)));
+    await Promise.allSettled(fileIds.map((id) => api.deleteFile(id)));
+    await reload();
+    // Reuse the error line as a neutral notice — nothing went wrong, the user
+    // asked for this.
+    setError('Upload cancelled — removed the partial upload.');
+  }, [api, reload]);
+
+  const cancelUpload = useCallback(() => {
+    setCancelling(true);
+    uploadAbort.current?.abort();
+  }, []);
+
   // ---- Uploads (button, drag-drop, clipboard paste) ----
   const doUpload = useCallback(
     async (list: FileList | File[], source: 'UPLOAD' | 'CLIPBOARD') => {
@@ -305,34 +349,51 @@ export function DatabankTab({
       }
       const ok = arr.filter((f) => f.size <= MAX_FILE_BYTES);
       const tooBig = arr.filter((f) => f.size > MAX_FILE_BYTES);
+      const ac = new AbortController();
+      uploadAbort.current = ac;
+      rollback.current = { fileIds: [], folderIds: [] };
+      rollingBack.current = false;
       setBusy(true);
       setError(null);
       try {
         for (let i = 0; i < ok.length; i++) {
+          if (ac.signal.aborted) break;
           const f = ok[i];
           setProgress({ done: i, total: ok.length, name: f.name, pct: 0 });
           // eslint-disable-next-line no-await-in-loop
-          await putFile(f, currentFolderId, source, (frac) =>
-            setProgress({ done: i, total: ok.length, name: f.name, pct: Math.round(frac * 100) }),
+          const made = await putFile(
+            f,
+            currentFolderId,
+            source,
+            (frac) => setProgress({ done: i, total: ok.length, name: f.name, pct: Math.round(frac * 100) }),
+            ac.signal,
           );
+          if (made?.id) rollback.current.fileIds.push(made.id);
         }
-        await reload();
-        if (tooBig.length) {
-          setError(
-            `Skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit: ${tooBig
-              .slice(0, 5)
-              .map((f) => f.name)
-              .join(', ')}${tooBig.length > 5 ? '…' : ''}`,
-          );
+        if (ac.signal.aborted) {
+          await rollbackUpload();
+        } else {
+          await reload();
+          if (tooBig.length) {
+            setError(
+              `Skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit: ${tooBig
+                .slice(0, 5)
+                .map((f) => f.name)
+                .join(', ')}${tooBig.length > 5 ? '…' : ''}`,
+            );
+          }
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Upload failed');
+        if (ac.signal.aborted || isAbortError(e)) await rollbackUpload();
+        else setError(e instanceof Error ? e.message : 'Upload failed');
       } finally {
+        uploadAbort.current = null;
+        setCancelling(false);
         setBusy(false);
         setProgress(null);
       }
     },
-    [putFile, currentFolderId, reload, readOnly, v2, uploadDest],
+    [putFile, currentFolderId, reload, readOnly, v2, uploadDest, rollbackUpload],
   );
 
   // Upload a whole folder (from the "Upload folder" button or a dropped
@@ -357,6 +418,10 @@ export function DatabankTab({
       }
       const ok = entries.filter((e) => e.file.size <= MAX_FILE_BYTES);
       const tooBig = entries.filter((e) => e.file.size > MAX_FILE_BYTES);
+      const ac = new AbortController();
+      uploadAbort.current = ac;
+      rollback.current = { fileIds: [], folderIds: [] };
+      rollingBack.current = false;
       setBusy(true);
       setError(null);
       try {
@@ -374,9 +439,13 @@ export function DatabankTab({
         const dirs = [...dirSet].sort(
           (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b),
         );
-        // 2. Create the folders top-down, mapping each path to its new id.
+        // 2. Create the folders top-down, mapping each path to its new id. Only
+        //    the TOP-LEVEL folders (no parent path → created under
+        //    currentFolderId) need recording for rollback: deleting one cascades
+        //    to its whole nested subtree + the files uploaded into it.
         const pathToId = new Map<string, string>();
         for (const d of dirs) {
+          if (ac.signal.aborted) break;
           const segs = d.split('/');
           const parentPath = segs.slice(0, -1).join('/');
           const parentId = parentPath ? pathToId.get(parentPath) ?? currentFolderId : currentFolderId;
@@ -384,9 +453,11 @@ export function DatabankTab({
           // eslint-disable-next-line no-await-in-loop
           const created = await makeFolder(name, parentId);
           pathToId.set(d, created.id);
+          if (!parentPath) rollback.current.folderIds.push(created.id);
         }
         // 3. Upload each file into the folder its path resolves to.
         for (let i = 0; i < ok.length; i++) {
+          if (ac.signal.aborted) break;
           const { file, relPath } = ok[i];
           const parts = relPath.split('/');
           parts.pop();
@@ -394,24 +465,36 @@ export function DatabankTab({
           const target = dirPath ? pathToId.get(dirPath) ?? currentFolderId : currentFolderId;
           setProgress({ done: i, total: ok.length, name: file.name, pct: 0 });
           // eslint-disable-next-line no-await-in-loop
-          await putFile(file, target, 'UPLOAD', (frac) =>
-            setProgress({ done: i, total: ok.length, name: file.name, pct: Math.round(frac * 100) }),
+          const made = await putFile(
+            file,
+            target,
+            'UPLOAD',
+            (frac) => setProgress({ done: i, total: ok.length, name: file.name, pct: Math.round(frac * 100) }),
+            ac.signal,
           );
+          if (made?.id) rollback.current.fileIds.push(made.id);
         }
-        await reload();
-        if (tooBig.length) {
-          setError(
-            `Uploaded the folder, but skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit.`,
-          );
+        if (ac.signal.aborted) {
+          await rollbackUpload();
+        } else {
+          await reload();
+          if (tooBig.length) {
+            setError(
+              `Uploaded the folder, but skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit.`,
+            );
+          }
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Folder upload failed');
+        if (ac.signal.aborted || isAbortError(e)) await rollbackUpload();
+        else setError(e instanceof Error ? e.message : 'Folder upload failed');
       } finally {
+        uploadAbort.current = null;
+        setCancelling(false);
         setBusy(false);
         setProgress(null);
       }
     },
-    [makeFolder, putFile, currentFolderId, reload, readOnly, v2, uploadDest],
+    [makeFolder, putFile, currentFolderId, reload, readOnly, v2, uploadDest, rollbackUpload],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -816,11 +899,32 @@ export function DatabankTab({
               track is --sos-border and the highlight is --sos-accent, both of
               which adapt to light/dark. */}
           <style>{`@keyframes sos-databank-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Loader2 size={13} className="animate-spin" />
-            {progress
-              ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
-              : activity ?? 'Working…'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+              <Loader2 size={13} className="animate-spin" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {progress
+                  ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
+                  : activity ?? 'Working…'}
+              </span>
+            </span>
+            {progress ? (
+              <button
+                type="button"
+                onClick={cancelUpload}
+                disabled={cancelling}
+                style={{
+                  ...btn(false),
+                  padding: '5px 10px',
+                  fontSize: 12,
+                  flexShrink: 0,
+                  cursor: cancelling ? 'default' : 'pointer',
+                  opacity: cancelling ? 0.6 : 1,
+                }}
+              >
+                <X size={13} /> {cancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            ) : null}
           </div>
           {progress ? (
             <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>

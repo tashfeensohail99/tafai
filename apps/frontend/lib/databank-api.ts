@@ -72,7 +72,26 @@ import {
   uploadJrDatabankFileVersion,
   uploadJrPersonalFile,
 } from './jr-databank';
+import { apiFetch } from './api-client';
 import type { DatabankBasePath } from './databank-upload/transport';
+import type { ListOpenUploadsResponse } from './databank-upload/api-types';
+
+export type { OpenUpload } from './databank-upload/api-types';
+
+/**
+ * The caller's unfinished upload sessions for ONE portal (UPLOADING not-expired,
+ * COMPLETING, or recently-FAILED) — the data behind the "resume your interrupted
+ * uploads" banner. A browser can't keep File handles across a page reload, so the
+ * in-memory queue is gone after a refresh even though the server-side session and
+ * its already-uploaded parts live on (a ~6-day window); this lets the banner ask
+ * the user to re-select the files so the resumable engine can continue them.
+ */
+export function fetchOpenUploads(base: DatabankBasePath): Promise<ListOpenUploadsResponse> {
+  return apiFetch<ListOpenUploadsResponse>(`${base}/uploads`, { cache: 'no-store' }).then((r) => ({
+    uploads: r.uploads ?? [],
+    hasMore: r.hasMore ?? false,
+  }));
+}
 
 /**
  * ONE Databank, several portals. The explorer (DatabankTab) and the landing

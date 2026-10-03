@@ -26,6 +26,7 @@ import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
 import { isDatabankExplorerV2Enabled } from '@/lib/databank-explorer/flag';
 import { DatabankExplorerV2 } from '@/components/databank/explorer/DatabankExplorerV2';
+import { UploadResumeBanner } from '@/components/databank/UploadResumeBanner';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
 import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
 import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presence';
@@ -646,6 +647,8 @@ export function DatabankTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Resume interrupted uploads after a reload (resumable path only). */}
+      {v2 ? <UploadResumeBanner dest={uploadDest} readOnly={readOnly} /> : null}
       {/* Toolbar: breadcrumb + actions */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: muted, flexWrap: 'wrap' }}>

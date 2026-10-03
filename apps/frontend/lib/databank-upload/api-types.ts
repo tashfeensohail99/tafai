@@ -79,3 +79,35 @@ export interface CompleteResponse {
 export const MAX_INIT_FILES = 50;
 export const MAX_SIGN_PARTS = 100;
 export const MAX_COMPLETE_IDS = 50;
+
+/** The statuses `GET {base}/uploads` (listOpen) returns: still uploading (not
+ *  expired), finishing, or recently failed. */
+export type OpenUploadStatus = 'UPLOADING' | 'COMPLETING' | 'FAILED';
+
+/** One of the caller's unfinished upload sessions — drives the resume banner.
+ *  Matches the backend `listOpen` select (databank-upload.service.ts); dates are
+ *  ISO strings and the BigInt size arrives as a JSON number. */
+export interface OpenUpload {
+  id: string;
+  /** The client databank this session targets, or null for a personal area. */
+  clientId: string | null;
+  /** Owner of the personal area (the caller, unless a manager uploaded for an
+   *  associate), or null for a client databank. */
+  ownerUserId: string | null;
+  folderId: string | null;
+  /** Set for folder uploads (e.g. "Passport/scan.pdf"); null for loose files. */
+  relativePath: string | null;
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+  status: OpenUploadStatus;
+  failureReason: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** The `GET {base}/uploads` response shape. */
+export interface ListOpenUploadsResponse {
+  uploads: OpenUpload[];
+  hasMore: boolean;
+}

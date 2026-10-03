@@ -52,6 +52,7 @@ import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presenc
 import { dataScopeOf } from '@/lib/databank-upload/keys';
 import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
 import type { UploadDest } from '@/lib/databank-upload-browser';
+import { UploadResumeBanner } from '@/components/databank/UploadResumeBanner';
 
 /**
  * Databank explorer, rebuilt (Databank Phase 2) — behind
@@ -958,6 +959,9 @@ export function DatabankExplorerV2({
           {error}
         </div>
       ) : null}
+
+      {/* Resume interrupted uploads after a reload (resumable path only). */}
+      {v2 ? <UploadResumeBanner dest={uploadDest} readOnly={readOnly} /> : null}
 
       <div
         style={{

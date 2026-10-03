@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -229,6 +230,34 @@ export class CommitVersionDto {
   @IsString()
   @MinLength(1)
   @MaxLength(128)
+  sha256!: string;
+}
+
+/**
+ * Databank P3 PR-2 — init a resumable (> 2 GB) NEW VERSION upload for an existing
+ * file (the direct presign→PUT→commit version path tops out at ~2 GB). Mirrors
+ * InitUploadFileDto's per-file fields minus folderId/allowDuplicate: a version
+ * always targets ONE existing file (the route :fileId) and is never deduped. The
+ * scope is the file's own; the browser uploads the bytes through the resumable
+ * multipart engine, then completes as usual.
+ */
+export class InitVersionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  fileName!: string;
+
+  @IsString()
+  @MaxLength(255)
+  mimeType!: string;
+
+  /** Whole-file size in bytes (a JS number — exact far beyond any file). */
+  @IsInt()
+  @Min(0)
+  sizeBytes!: number;
+
+  /** Lower-case hex SHA-256 of the whole file (computed in the browser). */
+  @Matches(/^[0-9a-f]{64}$/, { message: 'sha256 must be 64 lower-case hex characters' })
   sha256!: string;
 }
 

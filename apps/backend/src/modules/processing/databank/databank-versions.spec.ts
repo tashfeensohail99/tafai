@@ -3,7 +3,7 @@ import {
   ConflictException,
   PreconditionFailedException,
 } from '@nestjs/common';
-import { DatabankService } from './databank.service';
+import { DatabankService, DatabankTargetFileGoneError } from './databank.service';
 import { DatabankTrashSweeperService } from './databank-trash-sweeper.service';
 
 /**
@@ -201,6 +201,64 @@ describe('DatabankService — commitNewVersion', () => {
       PreconditionFailedException,
     );
     expect(storage.delete).not.toHaveBeenCalled(); // Y's live current bytes preserved
+  });
+});
+
+describe('DatabankService — attachUploadedVersion (resumable version core, P3 PR-2)', () => {
+  // Runs INSIDE the upload-service commit's tx, under the per-file lock. Mirrors
+  // commitNewVersion's core, minus presign/HEAD/If-Match (the resumable engine
+  // already verified the object + size). The caller (commit) owns the session CAS.
+  const INPUT = {
+    targetFileId: 'F1',
+    storageKey: NEW_KEY,
+    mimeType: 'application/pdf',
+    fileSizeBytes: 20,
+    sha256: 'newhash',
+    createdByUserId: 'u1',
+    uploadSessionId: 'sess-1',
+  };
+
+  it('materialises v1 from the mirror THEN appends vN (carrying uploadSessionId), repoints current + mirror via a PLAIN update', async () => {
+    const { svc, tx } = harness(); // implicit-v1 file (currentVersionId null)
+    const out = await svc.attachUploadedVersion(tx as never, INPUT as never);
+    expect(out.noop).toBe(false);
+    expect((out.file as { id: string }).id).toBe('F1');
+    expect(tx.databankFileVersion.create).toHaveBeenCalledTimes(2);
+    const v1 = tx.databankFileVersion.create.mock.calls[0][0].data;
+    expect(v1).toMatchObject({ versionNumber: 1, storageKey: CLIENT_FILE.storageKey, createdByUserId: 'u0', createdAt: CLIENT_FILE.createdAt });
+    const v2 = tx.databankFileVersion.create.mock.calls[1][0].data;
+    expect(v2).toMatchObject({ versionNumber: 2, storageKey: NEW_KEY, createdByUserId: 'u1', uploadSessionId: 'sess-1' });
+    const upd = tx.databankFile.updateMany.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: 'F1' }); // PLAIN update — no versionSeq compare-and-set
+    expect(upd.data).toMatchObject({ currentVersionId: v2.id, storageKey: NEW_KEY, sha256: 'newhash', versionSeq: { increment: 1 } });
+  });
+
+  it('is idempotent when this session already owns a version row: returns the file, takes no lock, creates nothing', async () => {
+    const { svc, tx } = harness();
+    tx.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'F1' }); // a lost-reply / takeover retry
+    const out = await svc.attachUploadedVersion(tx as never, INPUT as never);
+    expect(out.noop).toBe(false);
+    expect((out.file as { id: string }).id).toBe('F1');
+    expect(tx.$executeRaw).not.toHaveBeenCalled(); // never took the per-file lock
+    expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
+    expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sha256 == the CURRENT version is a no-op (noop:true): creates NO version, leaves the file unchanged', async () => {
+    const { svc, tx } = harness();
+    const out = await svc.attachUploadedVersion(tx as never, { ...INPUT, sha256: 'oldhash' } as never); // == CLIENT_FILE.sha256
+    expect(out.noop).toBe(true);
+    expect((out.file as { id: string }).id).toBe('F1');
+    expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
+    expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a target file trashed/removed mid-upload (FOR UPDATE finds nothing) → throws DatabankTargetFileGoneError', async () => {
+    const { svc, tx } = harness();
+    tx.$queryRaw.mockResolvedValueOnce([]); // the live-file FOR UPDATE finds no row
+    await expect(svc.attachUploadedVersion(tx as never, INPUT as never)).rejects.toBeInstanceOf(DatabankTargetFileGoneError);
+    expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
+    expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
   });
 });
 

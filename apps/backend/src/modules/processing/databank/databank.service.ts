@@ -55,6 +55,12 @@ function clientTermsWhere(q?: string): Prisma.ClientWhereInput {
   };
 }
 
+/** Thrown by {@link DatabankService.attachUploadedVersion} when the file a
+ *  resumable version session targets was trashed/removed during the (possibly
+ *  long) upload. The upload-service commit() catches it, fails the session and
+ *  frees its now-homeless bytes (P3 resumable versions). */
+export class DatabankTargetFileGoneError extends Error {}
+
 /**
  * The per-client databank — a free-form, Drive-like document repository for the
  * Processing team, living alongside the structured document checklist.
@@ -212,6 +218,19 @@ export class DatabankService {
     if (!file) throw new NotFoundException('File not found');
     await this.authorizeRow(file, user, 'write');
     return file;
+  }
+
+  /** Authorise a WRITE on an EXISTING file's OWN scope for a resumable
+   *  new-version upload (P3 PR-2 initVersion). Reuses {@link loadFile} (404s a
+   *  missing/trashed file, then authorizeRow 'write'), returning just the
+   *  identity + scope the version session needs — the scope is the file's own
+   *  client/owner, so no targetUserId is involved. */
+  async loadFileForVersionWrite(
+    fileId: string,
+    user: RequestUser,
+  ): Promise<{ id: string; clientId: string | null; ownerUserId: string | null; folderId: string | null }> {
+    const file = await this.loadFile(fileId, user);
+    return { id: file.id, clientId: file.clientId, ownerUserId: file.ownerUserId, folderId: file.folderId };
   }
 
   /** Load a file for a READ operation (download / copy-from). Client files are
@@ -2081,6 +2100,10 @@ export class DatabankService {
       sha256: string | null;
       createdByUserId: string | null;
       name?: string | null;
+      // P3 PR-2: the resumable version session's id (its idempotency home —
+      // DatabankFileVersion.uploadSessionId is @unique). The direct path passes
+      // nothing → null.
+      uploadSessionId?: string | null;
     },
   ): Promise<string> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -2104,6 +2127,7 @@ export class DatabankService {
             sha256: data.sha256,
             source: DatabankFileSource.UPLOAD,
             name: data.name ?? null,
+            uploadSessionId: data.uploadSessionId ?? null,
             createdByUserId: data.createdByUserId,
           },
         });
@@ -2114,6 +2138,125 @@ export class DatabankService {
       }
     }
     throw new ConflictException('Could not number the new version — please retry.');
+  }
+
+  /**
+   * Attach an already-uploaded, server-VERIFIED object as a NEW current version of
+   * an existing file — the resumable (> 2 GB) version path (P3 PR-2). Runs INSIDE
+   * the upload-service commit's $transaction (`tx`), under the per-file version
+   * lock. Mirrors {@link commitNewVersion}'s core, minus presign/HEAD/If-Match
+   * (the resumable engine already verified the object + its size in finalize).
+   *
+   *  1. Idempotency — this session already owns a version row (lost reply / claim
+   *     takeover retry): return that file, do NOTHING else (the object is
+   *     referenced — free nothing).
+   *  2. Per-file version lock + SELECT … FOR UPDATE on the live target file.
+   *  3. A gone target (trashed/removed mid-upload) → throw DatabankTargetFileGoneError
+   *     (the caller fails the session and frees the homeless bytes).
+   *  4. sha256 == the CURRENT version → no-op (noop:true): create NO version, leave
+   *     the file unchanged; the caller frees the redundant object via twin-cleanup.
+   *  5. Materialise the implicit v1 from the mirror on first use, then append vN
+   *     (carrying uploadSessionId) and repoint current + mirror. versionSeq++ is a
+   *     PLAIN update — the caller's session CAS guards takeover and the per-file
+   *     lock serialises, so no versionSeq compare-and-set is needed here.
+   *
+   * No folder FOR SHARE / lockLiveDestinationFolder: a version attaches to an
+   * EXISTING live file, never creates or reparents a file row, so the "no live file
+   * stranded under a trashed folder" invariant can't be triggered.
+   */
+  async attachUploadedVersion(
+    tx: Prisma.TransactionClient,
+    input: {
+      targetFileId: string;
+      storageKey: string;
+      mimeType: string | null;
+      fileSizeBytes: number | bigint | null;
+      sha256: string | null;
+      createdByUserId: string | null;
+      uploadSessionId: string;
+    },
+  ): Promise<{ file: Prisma.DatabankFileGetPayload<{ select: DatabankService['fileSelect'] }>; noop: boolean }> {
+    // 1. Idempotency — this session already attached a version (a lost-reply /
+    //    takeover retry). The object is referenced; return the file, free nothing.
+    const already = await tx.databankFileVersion.findUnique({
+      where: { uploadSessionId: input.uploadSessionId },
+      select: { fileId: true },
+    });
+    if (already) {
+      const file = await tx.databankFile.findUniqueOrThrow({ where: { id: already.fileId }, select: this.fileSelect });
+      return { file, noop: false };
+    }
+    await this.lockFileVersions(tx, input.targetFileId);
+    const rows = await tx.$queryRaw<
+      {
+        id: string;
+        storageKey: string;
+        mimeType: string | null;
+        fileSizeBytes: bigint | null;
+        sha256: string | null;
+        currentVersionId: string | null;
+        versionSeq: number;
+        uploadedByUserId: string | null;
+        createdAt: Date;
+      }[]
+    >`
+      SELECT "id", "storageKey", "mimeType", "fileSizeBytes", "sha256",
+             "currentVersionId", "versionSeq", "uploadedByUserId", "createdAt"
+        FROM "processing"."databank_files"
+       WHERE "id" = ${input.targetFileId} AND "deletedAt" IS NULL
+       FOR UPDATE`;
+    const current = rows[0];
+    // The target was trashed/removed during the (possibly long) upload → fail the
+    // session (the caller frees the now-homeless object).
+    if (!current) throw new DatabankTargetFileGoneError();
+    // sha256 no-op vs the CURRENT version only (a null current never matches, so a
+    // first version always lands). Holding the lock + FOR UPDATE, current can't move.
+    if (input.sha256 && current.sha256 && input.sha256 === current.sha256) {
+      const file = await tx.databankFile.findUniqueOrThrow({ where: { id: input.targetFileId }, select: this.fileSelect });
+      return { file, noop: true };
+    }
+    // Materialise the implicit v1 from the file's mirror on first version.
+    if (!current.currentVersionId) {
+      await tx.databankFileVersion.create({
+        data: {
+          id: randomUUID(),
+          fileId: input.targetFileId,
+          versionNumber: 1,
+          storageKey: current.storageKey,
+          mimeType: current.mimeType,
+          fileSizeBytes: current.fileSizeBytes,
+          sha256: current.sha256,
+          source: DatabankFileSource.UPLOAD,
+          createdByUserId: current.uploadedByUserId,
+          createdAt: current.createdAt,
+        },
+      });
+    }
+    const newVersionId = await this.insertNextVersion(tx, {
+      fileId: input.targetFileId,
+      storageKey: input.storageKey,
+      mimeType: input.mimeType,
+      fileSizeBytes: input.fileSizeBytes,
+      sha256: input.sha256,
+      createdByUserId: input.createdByUserId,
+      uploadSessionId: input.uploadSessionId,
+    });
+    // Repoint current + mirror the new bytes. PLAIN update (no versionSeq CAS): the
+    // per-file lock serialises version ops and the caller's session CAS guards
+    // takeover, so the current can't move underneath this.
+    await tx.databankFile.updateMany({
+      where: { id: input.targetFileId },
+      data: {
+        currentVersionId: newVersionId,
+        storageKey: input.storageKey,
+        mimeType: input.mimeType,
+        fileSizeBytes: input.fileSizeBytes,
+        sha256: input.sha256,
+        versionSeq: { increment: 1 },
+      },
+    });
+    const file = await tx.databankFile.findUniqueOrThrow({ where: { id: input.targetFileId }, select: this.fileSelect });
+    return { file, noop: false };
   }
 
   /**

@@ -2648,18 +2648,47 @@ export function deleteDatabankVersion(
   });
 }
 
+/** Files at or below this size take the direct presign → PUT → commit path;
+ *  bigger ones go through the resumable multipart engine. Mirrors the backend
+ *  `DIRECT_MAX_BYTES` (int4-max, 2 GB − 1). */
+export const DIRECT_VERSION_MAX_BYTES = 2_147_483_647;
+
 /**
- * Upload a NEW VERSION of an existing databank file: presign → whole-file sha256
- * → direct PUT to storage (with byte progress) → commit the new current bytes.
- * Reuses the browser hasher (`lib/databank-upload/hash`) and the same direct-PUT
- * helper (`putToStorage`) as `directUploadDatabankFile` — no hand-rolled crypto
- * or PUT. Rejects up front when the file exceeds the direct-upload cap.
+ * Upload a NEW VERSION of an existing databank file. Files ≤ 2 GB take the
+ * direct path: presign → whole-file sha256 → direct PUT to storage (with byte
+ * progress) → commit the new current bytes. Reuses the browser hasher
+ * (`lib/databank-upload/hash`) and the same direct-PUT helper (`putToStorage`)
+ * as `directUploadDatabankFile` — no hand-rolled crypto or PUT. Bigger files are
+ * delegated to the resumable multipart uploader (`uploadVersionResumable`).
  */
 export async function uploadDatabankFileVersion(
   fileId: string,
   file: File,
   onProgress?: (fraction: number) => void,
 ): Promise<ApiDatabankFile> {
+  if (file.size > DIRECT_VERSION_MAX_BYTES) {
+    const [{ uploadVersionResumable }, { makeUploadTransport }, { hashFile }] = await Promise.all([
+      import('./databank-upload/version-resumable'),
+      import('./databank-upload/transport'),
+      import('./databank-upload/hash'),
+    ]);
+    return uploadVersionResumable(
+      {
+        initVersion: (id, body) =>
+          apiFetch(`/processing/databank/files/${id}/versions/upload/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            cache: 'no-store',
+          }),
+        transport: makeUploadTransport('/processing/databank', {}),
+        hashFile,
+      },
+      fileId,
+      file,
+      { onProgress },
+    );
+  }
   const mimeType = file.type || 'application/octet-stream';
   const presigned = await presignDatabankVersion(fileId, {
     mimeType,

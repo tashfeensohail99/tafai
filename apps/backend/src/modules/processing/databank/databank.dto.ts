@@ -113,6 +113,23 @@ export class CopyFileDto {
 }
 
 /**
+ * Recursively copy a folder (its whole live subtree) — same shape as
+ * CopyFileDto. `forbidNonWhitelisted` is on, so BOTH fields must be declared.
+ */
+export class CopyFolderDto {
+  /** Client to copy into; omit to copy within the source's own scope. */
+  @IsOptional()
+  @IsUUID()
+  targetClientId?: string;
+
+  /** Destination folder in the target scope; null / omit = that scope's root. */
+  @IsOptional()
+  @ValidateIf((o) => o.targetFolderId !== null)
+  @IsUUID()
+  targetFolderId?: string | null;
+}
+
+/**
  * Direct-to-storage upload (the Google Drive migration path). The browser asks
  * the backend to PRESIGN an upload, PUTs the bytes STRAIGHT to R2 (no bytes
  * through Railway), then COMMITs the DB row. Scope is EITHER a client

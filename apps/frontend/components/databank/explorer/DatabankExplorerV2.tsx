@@ -36,6 +36,7 @@ import {
   Copy,
   Scissors,
   ClipboardPaste,
+  Eye,
 } from 'lucide-react';
 import type {
   ApiDatabankFolder,
@@ -55,6 +56,7 @@ import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presenc
 import { dataScopeOf } from '@/lib/databank-upload/keys';
 import { settlePaste, type PasteJob } from '@/lib/databank-explorer/settle-paste';
 import { canPasteInto } from '@/lib/databank-explorer/paste-target';
+import { previewKind } from '@/lib/databank-explorer/preview-kind';
 import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
 import type { UploadDest } from '@/lib/databank-upload-browser';
 import { UploadResumeBanner } from '@/components/databank/UploadResumeBanner';
@@ -647,6 +649,22 @@ export function DatabankExplorerV2({
     [api],
   );
 
+  // Open the in-app live preview (fetches a short-lived signed URL first).
+  const openPreview = useCallback(
+    async (file: ApiDatabankFile) => {
+      setPreviewLoading(true);
+      try {
+        const { url } = await api.signedUrl(file.id);
+        setPreview({ file, url });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not open the file');
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [api],
+  );
+
   // ---- Search (Databank P2) -----------------------------------------------
   // A non-empty query flips the MAIN pane from the selected folder's file list
   // to server-side search RESULTS across the whole scope, with type facets +
@@ -827,6 +845,9 @@ export function DatabankExplorerV2({
   // Folder Move…/Delete go through the (generalized) dialogs, like files.
   const [folderMove, setFolderMove] = useState<{ id: string; name: string } | null>(null);
   const [folderDelete, setFolderDelete] = useState<{ id: string; name: string } | null>(null);
+  // Live in-app preview (image / pdf / video / audio / text) — Google-Drive-style.
+  const [preview, setPreview] = useState<{ file: ApiDatabankFile; url: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   // Trash view (P3-1) + per-file version history (P3-2).
   const [trashOpen, setTrashOpen] = useState(false);
   const [versionsTarget, setVersionsTarget] = useState<ApiDatabankFile | null>(null);
@@ -1655,6 +1676,7 @@ export function DatabankExplorerV2({
                             <ContextMenu.Trigger asChild>
                               <div
                                 onClick={() => setDetailsFile(file)}
+                                onDoubleClick={() => void openPreview(file)}
                                 onContextMenu={(e) => e.stopPropagation()}
                                 style={{
                                   position: 'absolute',
@@ -1733,6 +1755,9 @@ export function DatabankExplorerV2({
                             </ContextMenu.Trigger>
                             <ContextMenu.Portal>
                               <ContextMenu.Content className="dbx-menu" collisionPadding={8}>
+                                <ContextMenu.Item className="dbx-item" onSelect={() => void openPreview(file)}>
+                                  <Eye size={15} /> Preview
+                                </ContextMenu.Item>
                                 <ContextMenu.Item className="dbx-item" onSelect={() => void download(file)}>
                                   <Download size={15} /> Open / Download
                                 </ContextMenu.Item>
@@ -1832,6 +1857,7 @@ export function DatabankExplorerV2({
                 narrow={narrow}
                 pathLabel={folderPathOf(detailsFile.folderId)}
                 onClose={() => setDetailsFile(null)}
+                onPreview={() => void openPreview(detailsFile)}
                 onDownload={() => void download(detailsFile)}
                 onVersions={() => setVersionsTarget(detailsFile)}
                 onSave={(patch) => saveDetails(detailsFile, patch)}
@@ -1916,6 +1942,21 @@ export function DatabankExplorerV2({
           onConfirm={() => doFolderDelete(folderDelete.id)}
         />
       ) : null}
+      {previewLoading && !preview ? (
+        <div className="dbx-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} aria-hidden>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#fff', fontSize: 13 }}>
+            <Loader2 size={16} className="animate-spin" /> Opening…
+          </div>
+        </div>
+      ) : null}
+      {preview ? (
+        <PreviewModal
+          file={preview.file}
+          url={preview.url}
+          onClose={() => setPreview(null)}
+          onDownload={() => void download(preview.file)}
+        />
+      ) : null}
       {trashOpen ? (
         <TrashDialog api={api} scope={trashScope} onClose={() => setTrashOpen(false)} reload={reload} />
       ) : null}
@@ -1941,6 +1982,7 @@ function DetailsPanel({
   narrow,
   pathLabel,
   onClose,
+  onPreview,
   onDownload,
   onVersions,
   onSave,
@@ -1950,6 +1992,7 @@ function DetailsPanel({
   narrow: boolean;
   pathLabel: string;
   onClose: () => void;
+  onPreview: () => void;
   onDownload: () => void;
   onVersions: () => void;
   onSave: (patch: { description: string | null; tags: string[] }) => Promise<void>;
@@ -2022,6 +2065,14 @@ function DetailsPanel({
           <dt style={{ color: muted }}>Modified</dt>
           <dd style={{ margin: 0, color: primary }}>{fmtDate(file.updatedAt) || '—'}</dd>
         </dl>
+
+        <button
+          type="button"
+          onClick={onPreview}
+          style={{ ...barBtn, justifyContent: 'center', width: '100%', background: accent, color: '#fff', borderColor: accent }}
+        >
+          <Eye size={14} /> Preview
+        </button>
 
         <button
           type="button"
@@ -2140,6 +2191,94 @@ function DetailsPanel({
 // ---------------------------------------------------------------------------
 // Dialogs
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Live in-app preview — images, PDFs, video, audio and text render inline
+// (Google-Drive-style); anything else falls back to a Download prompt. Opened
+// by double-clicking a row, the row/context-menu "Preview", or the details
+// panel's Preview button. The signed URL serves the bytes inline, so these
+// native elements render without proxying through the app.
+// ---------------------------------------------------------------------------
+function PreviewModal({
+  file,
+  url,
+  onClose,
+  onDownload,
+}: {
+  file: ApiDatabankFile;
+  url: string;
+  onClose: () => void;
+  onDownload: () => void;
+}) {
+  const kind = previewKind(file.mimeType);
+  return (
+    <Dialog.Root open onOpenChange={(o: boolean) => (!o ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dbx-overlay" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%,-50%)',
+            width: 'min(1100px, calc(100vw - 32px))',
+            height: 'min(860px, calc(100vh - 48px))',
+            display: 'flex',
+            flexDirection: 'column',
+            background: surfaceSolid,
+            border,
+            borderRadius: 14,
+            padding: 14,
+            zIndex: 71,
+            boxShadow: '0 24px 60px rgba(15,23,42,0.28)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <Dialog.Title
+              style={{ margin: 0, fontSize: 14, fontWeight: 700, color: primary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={file.fileName}
+            >
+              {file.fileName}
+            </Dialog.Title>
+            <button type="button" onClick={onDownload} style={barBtn}>
+              <Download size={14} /> Download
+            </button>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                title="Close"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: muted, padding: 4, borderRadius: 6, display: 'inline-flex' }}
+              >
+                <X size={16} />
+              </button>
+            </Dialog.Close>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, background: '#fff', borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {kind === 'image' ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={url} alt={file.fileName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+            ) : kind === 'pdf' || kind === 'text' ? (
+              <iframe title={`Preview of ${file.fileName}`} src={url} style={{ width: '100%', height: '100%', border: 'none' }} />
+            ) : kind === 'video' ? (
+              <video src={url} controls style={{ maxWidth: '100%', maxHeight: '100%' }} />
+            ) : kind === 'audio' ? (
+              <audio src={url} controls style={{ width: '90%' }} />
+            ) : (
+              <div style={{ textAlign: 'center', color: muted, padding: 24 }}>
+                <FileIcon size={30} />
+                <div style={{ marginTop: 8, fontSize: 13 }}>Preview isn’t available for this file type.</div>
+                <button type="button" onClick={onDownload} style={{ ...barBtn, margin: '12px auto 0' }}>
+                  <Download size={14} /> Download to open
+                </button>
+              </div>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function DialogShell({
   title,
   onClose,

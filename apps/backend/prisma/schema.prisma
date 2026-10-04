@@ -2052,6 +2052,7 @@ model Client {
   // Files belong to the CLIENT so they survive across every case.
   databankFolders  DatabankFolder[]
   databankFiles    DatabankFile[]
+  databankShares   DatabankShare[]
   reminders        ClientReminder[]
   // WhatsApp chat history follows the client after lead-to-client conversion.
   whatsappThreads  WhatsAppThread[]   @relation("ClientWhatsAppThreads")
@@ -3165,6 +3166,27 @@ enum DatabankFileSource {
   @@schema("processing")
 }
 
+/// Which department OWNS a databank row. The Processing and JR portals keep
+/// separate databanks: a row is visible only to its own department, except
+/// where a DatabankShare grants cross-department read. Set from the calling
+/// portal at creation; existing rows backfill to PROCESSING.
+enum DatabankDepartment {
+  PROCESSING
+  JR
+
+  @@schema("processing")
+}
+
+/// Access level a DatabankShare grants the target department. READ (the
+/// default) lets JR view/download the live Processing rows without mutating
+/// them; WRITE is an explicit opt-in for genuine co-editing.
+enum DatabankShareAccess {
+  READ
+  WRITE
+
+  @@schema("processing")
+}
+
 /// Lifecycle of a resumable databank upload session (Databank Phase 1).
 /// UPLOADING → (complete) COMPLETING → COMPLETED; or → ABORTED (cancel/expiry)
 /// / FAILED (verification). COMPLETING is claimed atomically so a complete that
@@ -3669,6 +3691,9 @@ model DatabankFolder {
   ownerUserId     String?
   parentFolderId  String?
   name            String
+  // Owning department (Processing vs JR) — drives portal separation. Set from
+  // the calling portal at creation; existing rows backfill to PROCESSING.
+  department      DatabankDepartment @default(PROCESSING)
   createdByUserId String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -3680,8 +3705,10 @@ model DatabankFolder {
   parent   DatabankFolder?  @relation("DatabankFolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
   children DatabankFolder[] @relation("DatabankFolderTree")
   files    DatabankFile[]
+  shares   DatabankShare[]
 
   @@index([clientId])
+  @@index([clientId, department])
   @@index([ownerUserId])
   @@index([parentFolderId])
   @@index([deletedAt])
@@ -3698,6 +3725,9 @@ model DatabankFile {
   ownerUserId         String?
   folderId            String?
   fileName            String
+  // Owning department (Processing vs JR) — drives portal separation. Set from
+  // the calling portal at creation; existing rows backfill to PROCESSING.
+  department          DatabankDepartment       @default(PROCESSING)
   description         String?
   tags                String[]                 @default([])
   customFields        Json?
@@ -3744,6 +3774,7 @@ model DatabankFile {
   versions DatabankFileVersion[] @relation("DatabankFileVersions")
 
   @@index([clientId])
+  @@index([clientId, department])
   @@index([ownerUserId])
   @@index([folderId])
   @@index([clientId, folderId])
@@ -3809,6 +3840,9 @@ model DatabankUpload {
   /// map each file back to its session.
   relativePath     String?
   fileName         String
+  // Owning department — carried through so the DatabankFile created when a
+  // resumable session completes inherits the right department.
+  department       DatabankDepartment     @default(PROCESSING)
   mimeType         String
   sizeBytes        BigInt
   fileLastModified DateTime?
@@ -3849,6 +3883,45 @@ model DatabankUpload {
   @@index([r2CleanedAt, updatedAt])
   @@index([r2UploadId])
   @@map("databank_uploads")
+  @@schema("processing")
+}
+
+/// A Processing manager's grant exposing a client's Processing databank — the
+/// WHOLE client (folderId NULL) or ONE folder subtree (folderId set) — to the
+/// JR portal. GRANT-ACCESS semantics: JR reads the SAME live Processing rows
+/// (no bytes copied); the grant is a logged policy decision. READ by default so
+/// JR never mutates the authoritative Processing record. Revoke is a soft
+/// `revokedAt` (takes effect on the next JR read); re-sharing after a revoke
+/// inserts a NEW row, keeping the full grant history. There is NO automatic or
+/// "grandfather" sharing — a row exists ONLY because a manager created it.
+/// A single ACTIVE grant per (clientId, folderId, toDepartment) is enforced by a
+/// partial unique index (revokedAt IS NULL) added in the migration.
+model DatabankShare {
+  id              String              @id @default(uuid())
+  /// The client whose Processing databank is exposed.
+  clientId        String
+  /// NULL = the whole client's Processing databank; set = that folder + all its
+  /// descendants only.
+  folderId        String?
+  fromDepartment  DatabankDepartment  @default(PROCESSING)
+  toDepartment    DatabankDepartment  @default(JR)
+  accessLevel     DatabankShareAccess @default(READ)
+  /// The Processing manager who granted the share.
+  grantedByUserId String
+  /// Soft revoke — NULL = active.
+  revokedAt       DateTime?
+  revokedByUserId String?
+  /// Optional "why escalated / shared" context.
+  note            String?             @db.VarChar(400)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  client Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  folder DatabankFolder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, toDepartment, revokedAt])
+  @@index([folderId])
+  @@map("databank_shares")
   @@schema("processing")
 }
 

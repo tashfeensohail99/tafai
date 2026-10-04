@@ -740,22 +740,28 @@
 @media (min-width: 1024px) {
   .sos-sidebar { transition: width 200ms ease; }
 
+  /* Desktop uses the rail toggle to collapse; the mobile drawer-close (✕) is
+     mobile-only — hide it on desktop so it doesn't sit next to the toggle. */
+  .sos-mobile-close {
+    display: none !important;
+  }
   .sos-rail-toggle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     margin-left: auto;
     padding: 6px;
-    border: none;
+    border: 1px solid var(--sos-sidebar-line);
     border-radius: 9px;
-    background: transparent;
-    color: var(--sos-sidebar-text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--sos-sidebar-text-strong);
     cursor: pointer;
-    transition: background 150ms ease, color 150ms ease;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
   }
   .sos-rail-toggle:hover {
     color: var(--sos-sidebar-text-strong);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--sos-brand-primary-soft, rgba(255, 255, 255, 0.1));
+    border-color: var(--sos-brand-primary-border, var(--sos-sidebar-line));
   }
 
   .sos-shell.is-railed .sos-sidebar { width: 76px; }

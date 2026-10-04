@@ -362,6 +362,18 @@ export function DatabankExplorerV2({
     [files, selectedFolderId],
   );
 
+  // Subfolders of the open folder — shown in the MAIN pane (not just the left
+  // tree) so a newly created subfolder is visible and can be opened from here,
+  // like any file explorer. Hidden while searching (the pane shows results then).
+  const currentSubfolders = useMemo(
+    () =>
+      (childrenByParent.get(selectedFolderId) ?? [])
+        .map((id) => folderById.get(id))
+        .filter((f): f is ApiDatabankFolder => !!f)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [childrenByParent, folderById, selectedFolderId],
+  );
+
   // ---- Uploads + new folder (Databank P2, PR-4) — mirrors the legacy tab -----
   // UPLOAD goes STRAIGHT to R2 (presigned PUT, with byte progress); CLIPBOARD
   // (small pasted screenshots) stays on the simple multipart path so its origin
@@ -1597,6 +1609,41 @@ export function DatabankExplorerV2({
           >
             {/* Table (folder view AND search results — one component, two data sources). */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Subfolders of the open folder — click to open (hidden while searching). */}
+              {!isSearching && currentSubfolders.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase', color: muted }}>
+                    Folders
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {currentSubfolders.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setSelectedFolderId(f.id)}
+                        title={`Open ${f.name}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 7,
+                          maxWidth: 220,
+                          border,
+                          borderRadius: 10,
+                          background: surfaceSolid,
+                          color: primary,
+                          fontSize: 13,
+                          fontWeight: 500,
+                          padding: '7px 12px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Folder size={15} style={{ color: accent, flexShrink: 0 }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <ContextMenu.Root>
                 <ContextMenu.Trigger asChild>
               <div
@@ -1620,7 +1667,11 @@ export function DatabankExplorerV2({
                   </div>
                 ) : rows.length === 0 ? (
                   <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
-                    {isSearching ? 'No files match your search.' : 'No files in this folder.'}
+                    {isSearching
+                      ? 'No files match your search.'
+                      : currentSubfolders.length > 0
+                        ? 'No files here — open a subfolder above.'
+                        : 'This folder is empty.'}
                   </div>
                 ) : (
                   <div style={{ minWidth: tableMinWidth }}>

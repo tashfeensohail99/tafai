@@ -95,7 +95,7 @@ export class JrDatabankController {
   @Get('clients')
   @RequirePermissions(READ)
   listClients(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
-    return this.databank.listClientsForJr(user, q);
+    return this.databank.listClientsForJr(user, DEPARTMENT, q);
   }
 
   /** The same JR-matter clients grouped by their assigned JR associate (own
@@ -103,14 +103,14 @@ export class JrDatabankController {
   @Get('clients/by-associate')
   @RequirePermissions(READ)
   clientsByAssociate(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
-    return this.databank.clientsByAssociateForJr(user, q);
+    return this.databank.clientsByAssociateForJr(user, DEPARTMENT, q);
   }
 
   /** The full folder tree + files for one client. */
   @Get('clients/:clientId/tree')
   @RequirePermissions(READ)
   getTree(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.getTree(clientId, user);
+    return this.databank.getTree(clientId, user, DEPARTMENT);
   }
 
   /**
@@ -134,7 +134,7 @@ export class JrDatabankController {
         : undefined,
       page: dto.page,
       pageSize: dto.pageSize,
-    });
+    }, DEPARTMENT);
   }
 
   // ---- My workspace (the caller's OWN personal folders, not tied to a client)

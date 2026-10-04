@@ -1,3 +1,4 @@
+import { DatabankDepartment } from '@prisma/client';
 import { JrDatabankController } from './jr-databank.controller';
 import type { DatabankService } from './databank.service';
 import type { DatabankUploadService } from './databank-upload.service';
@@ -43,15 +44,19 @@ describe('JrDatabankController search + updateFile parity', () => {
 
     void ctrl.search(dto, USER);
 
-    expect(databank.searchDatabank).toHaveBeenCalledWith(USER, {
-      clientId: 'c1',
-      personal: undefined,
-      q: 'passport',
-      folderId: null, // 'root' → the databank root
-      types: ['pdf', 'image'], // split on commas, trimmed, empties dropped
-      page: 2,
-      pageSize: 25,
-    });
+    expect(databank.searchDatabank).toHaveBeenCalledWith(
+      USER,
+      {
+        clientId: 'c1',
+        personal: undefined,
+        q: 'passport',
+        folderId: null, // 'root' → the databank root
+        types: ['pdf', 'image'], // split on commas, trimmed, empties dropped
+        page: 2,
+        pageSize: 25,
+      },
+      DatabankDepartment.JR, // the calling portal's department, threaded through
+    );
   });
 
   it('search: a real folder id passes through and an omitted folderId stays undefined (any folder)', () => {
@@ -61,12 +66,14 @@ describe('JrDatabankController search + updateFile parity', () => {
     expect(databank.searchDatabank).toHaveBeenLastCalledWith(
       USER,
       expect.objectContaining({ personal: true, folderId: 'abc-123', types: undefined }),
+      DatabankDepartment.JR,
     );
 
     void ctrl.search({ personal: true }, USER);
     expect(databank.searchDatabank).toHaveBeenLastCalledWith(
       USER,
       expect.objectContaining({ folderId: undefined, types: undefined }),
+      DatabankDepartment.JR,
     );
   });
 

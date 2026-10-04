@@ -1,3 +1,4 @@
+import { DatabankDepartment } from '@prisma/client';
 import { DatabankService } from './databank.service';
 
 /**
@@ -45,20 +46,20 @@ function byAssociateHarness(counts: Record<string, number>) {
 describe('Databank — hide empty clients from the default browse', () => {
   it('listClients: default browse returns only clients with files', async () => {
     const svc = listClientsHarness({ c1: 2 }); // c1 has 2 files, c2 has 0
-    const out = (await svc.listClients(USER)) as Array<{ id: string; fileCount: number }>;
+    const out = (await svc.listClients(USER, DatabankDepartment.PROCESSING)) as Array<{ id: string; fileCount: number }>;
     expect(out.map((c) => c.id)).toEqual(['c1']);
     expect(out[0].fileCount).toBe(2);
   });
 
   it('listClients: a search surfaces empty clients too (so a first file can be added)', async () => {
     const svc = listClientsHarness({ c1: 2 });
-    const out = (await svc.listClients(USER, 'client')) as Array<{ id: string }>;
+    const out = (await svc.listClients(USER, DatabankDepartment.PROCESSING, 'client')) as Array<{ id: string }>;
     expect(out.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
   });
 
   it('clientsByAssociate: default browse hides file-less clients and drops associates left empty', async () => {
     const svc = byAssociateHarness({ c1: 1 }); // only c1 has a file
-    const res = (await svc.clientsByAssociate(USER)) as { associates: Array<{ officerId: string; clientCount: number; clients: Array<{ id: string }> }> };
+    const res = (await svc.clientsByAssociate(USER, DatabankDepartment.PROCESSING)) as { associates: Array<{ officerId: string; clientCount: number; clients: Array<{ id: string }> }> };
     // off1 keeps only c1 (c2 empty → hidden); off2 had only c3 (empty) → dropped entirely.
     expect(res.associates.map((a) => a.officerId)).toEqual(['off1']);
     expect(res.associates[0].clients.map((c) => c.id)).toEqual(['c1']);
@@ -67,7 +68,7 @@ describe('Databank — hide empty clients from the default browse', () => {
 
   it('clientsByAssociate: a search shows every matching client, empty or not', async () => {
     const svc = byAssociateHarness({ c1: 1 });
-    const res = (await svc.clientsByAssociate(USER, 'client')) as { associates: Array<{ officerId: string; clients: Array<{ id: string }> }> };
+    const res = (await svc.clientsByAssociate(USER, DatabankDepartment.PROCESSING, 'client')) as { associates: Array<{ officerId: string; clients: Array<{ id: string }> }> };
     const ids = res.associates.flatMap((a) => a.clients.map((c) => c.id)).sort();
     expect(ids).toEqual(['c1', 'c2', 'c3']);
   });

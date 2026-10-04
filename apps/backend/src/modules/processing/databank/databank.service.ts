@@ -119,6 +119,20 @@ export class DatabankService {
   ) {}
 
   // ---------------------------------------------------------------------------
+  // Processing/JR portal separation (feature-flagged)
+  // ---------------------------------------------------------------------------
+
+  /** Master switch for the Processing/JR databank separation. OFF (the default)
+   *  → every read behaves BYTE-IDENTICALLY to before separation: no department
+   *  predicate, no share logic, no shared/readOnly tags. ON → the department
+   *  scoping + JR share-in logic below runs. Read straight from process.env (the
+   *  same way StorageService reads its config) so no ConfigService dependency is
+   *  introduced. */
+  private separationEnabled(): boolean {
+    return process.env.DATABANK_PORTAL_SEPARATION === 'on';
+  }
+
+  // ---------------------------------------------------------------------------
   // Access control
   // ---------------------------------------------------------------------------
 
@@ -296,29 +310,187 @@ export class DatabankService {
   // Browse
   // ---------------------------------------------------------------------------
 
+  /**
+   * The JR-readable slice of a client's PROCESSING databank, derived ONLY from
+   * active shares (toDepartment JR, not revoked). This is the SINGLE source of
+   * the share logic for every JR read path:
+   *   - 'NONE'        → no active share; JR sees none of Processing's rows.
+   *   - 'ALL'         → a whole-client share (folderId NULL); JR sees every
+   *                     Processing row for the client.
+   *   - { folderIds } → a folder share per row, each expanded via the existing
+   *                     collectSubtree to that folder ∪ all its descendants
+   *                     (deduped union); JR sees only Processing rows in them.
+   * ANY whole-client share wins over folder shares (it is strictly broader).
+   */
+  private async jrReadableProcessingScope(
+    clientId: string,
+    db = this.prisma,
+  ): Promise<'NONE' | 'ALL' | { folderIds: string[] }> {
+    const shares = await db.databankShare.findMany({
+      where: { clientId, toDepartment: DatabankDepartment.JR, revokedAt: null },
+    });
+    if (shares.length === 0) return 'NONE';
+    if (shares.some((s) => s.folderId === null)) return 'ALL';
+    const union = new Set<string>();
+    for (const s of shares) {
+      if (!s.folderId) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const ids = await this.collectSubtree(s.folderId, db);
+      for (const id of ids) union.add(id);
+    }
+    return { folderIds: [...union] };
+  }
+
+  /** A JR client's databank file count = its OWN JR files + the Processing files
+   *  shared in to JR (per {@link jrReadableProcessingScope}). The single source
+   *  of the JR fileCount, shared by listClientsForJr + clientsByAssociateForJr.
+   *  Separation-ON only — the OFF paths keep their original, department-agnostic
+   *  groupBy count unchanged. */
+  private async jrClientFileCount(clientId: string): Promise<number> {
+    const jrCount = await this.prisma.databankFile.count({
+      where: { clientId, department: DatabankDepartment.JR, deletedAt: null },
+    });
+    const scope = await this.jrReadableProcessingScope(clientId);
+    let sharedCount = 0;
+    if (scope === 'ALL') {
+      sharedCount = await this.prisma.databankFile.count({
+        where: { clientId, department: DatabankDepartment.PROCESSING, deletedAt: null },
+      });
+    } else if (scope !== 'NONE') {
+      sharedCount = await this.prisma.databankFile.count({
+        where: {
+          folderId: { in: scope.folderIds },
+          department: DatabankDepartment.PROCESSING,
+          deletedAt: null,
+        },
+      });
+    }
+    return jrCount + sharedCount;
+  }
+
   /** The full tree for one client: every live folder + file, flat. The client
    *  builds the hierarchy from parentFolderId / folderId — cheaper than a
-   *  recursive query and trivial on the render side. */
-  async getTree(clientId: string, user: RequestUser) {
+   *  recursive query and trivial on the render side.
+   *
+   *  Separation OFF → the whole client's databank, department-blind, untagged
+   *  (byte-identical to pre-separation). Separation ON → scoped to `viewerDept`
+   *  (from the calling portal, never the request): PROCESSING sees only its own
+   *  rows; JR sees its own JR rows PLUS any Processing rows shared in to JR, with
+   *  every shared-in row tagged shared/readOnly/department so the UI renders it
+   *  read-only. */
+  async getTree(clientId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     await this.assertClientReadAccess(clientId, user);
     const canWrite = await this.canWriteClient(clientId, user);
-    const [folders, files] = await Promise.all([
+
+    const folderSelect = {
+      id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true,
+    } as const;
+    const fileSelect = {
+      id: true, folderId: true, fileName: true, mimeType: true, fileSizeBytes: true,
+      source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
+    } as const;
+
+    // FLAG OFF — byte-identical to pre-separation: the whole client, every
+    // department, no shared/readOnly/department tags. `viewerDept` is ignored.
+    if (!this.separationEnabled()) {
+      const [folders, files] = await Promise.all([
+        this.prisma.databankFolder.findMany({
+          where: { clientId, deletedAt: null },
+          orderBy: { name: 'asc' },
+          select: folderSelect,
+        }),
+        this.prisma.databankFile.findMany({
+          where: { clientId, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: fileSelect,
+        }),
+      ]);
+      // canWrite tells the UI whether to show the edit controls: false = the
+      // viewer may read/download but not modify (client assigned to another officer).
+      return { clientId, folders, files, canWrite };
+    }
+
+    // FLAG ON, PROCESSING portal — only this department's own rows (never JR's).
+    if (viewerDept === DatabankDepartment.PROCESSING) {
+      const [folders, files] = await Promise.all([
+        this.prisma.databankFolder.findMany({
+          where: { clientId, department: DatabankDepartment.PROCESSING, deletedAt: null },
+          orderBy: { name: 'asc' },
+          select: folderSelect,
+        }),
+        this.prisma.databankFile.findMany({
+          where: { clientId, department: DatabankDepartment.PROCESSING, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: fileSelect,
+        }),
+      ]);
+      return { clientId, folders, files, canWrite };
+    }
+
+    // FLAG ON, JR portal — JR's OWN rows (writable per canWrite) UNION the
+    // Processing rows shared in to JR (always read-only).
+    const scope = await this.jrReadableProcessingScope(clientId);
+    const [ownFolders, ownFiles] = await Promise.all([
       this.prisma.databankFolder.findMany({
-        where: { clientId, deletedAt: null },
+        where: { clientId, department: DatabankDepartment.JR, deletedAt: null },
         orderBy: { name: 'asc' },
-        select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
+        select: folderSelect,
       }),
       this.prisma.databankFile.findMany({
-        where: { clientId, deletedAt: null },
+        where: { clientId, department: DatabankDepartment.JR, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true, folderId: true, fileName: true, mimeType: true, fileSizeBytes: true,
-          source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
-        },
+        select: fileSelect,
       }),
     ]);
-    // canWrite tells the UI whether to show the edit controls: false = the
-    // viewer may read/download but not modify (client assigned to another officer).
+
+    type FolderNode = (typeof ownFolders)[number] & {
+      department?: DatabankDepartment;
+      shared?: boolean;
+      readOnly?: boolean;
+    };
+    type FileNode = (typeof ownFiles)[number] & {
+      department?: DatabankDepartment;
+      shared?: boolean;
+      readOnly?: boolean;
+    };
+
+    // JR's own rows are tagged department JR (shared/readOnly left off/false).
+    const folders: FolderNode[] = ownFolders.map((f) => ({ ...f, department: DatabankDepartment.JR }));
+    const files: FileNode[] = ownFiles.map((f) => ({ ...f, department: DatabankDepartment.JR }));
+
+    if (scope !== 'NONE') {
+      const sharedFolderWhere: Prisma.DatabankFolderWhereInput =
+        scope === 'ALL'
+          ? { clientId, department: DatabankDepartment.PROCESSING, deletedAt: null }
+          : { id: { in: scope.folderIds }, department: DatabankDepartment.PROCESSING, deletedAt: null };
+      const sharedFileWhere: Prisma.DatabankFileWhereInput =
+        scope === 'ALL'
+          ? { clientId, department: DatabankDepartment.PROCESSING, deletedAt: null }
+          : { folderId: { in: scope.folderIds }, department: DatabankDepartment.PROCESSING, deletedAt: null };
+
+      const [sharedFolders, sharedFiles] = await Promise.all([
+        this.prisma.databankFolder.findMany({
+          where: sharedFolderWhere,
+          orderBy: { name: 'asc' },
+          select: folderSelect,
+        }),
+        this.prisma.databankFile.findMany({
+          where: sharedFileWhere,
+          orderBy: { createdAt: 'desc' },
+          select: fileSelect,
+        }),
+      ]);
+      // Shared-in Processing rows: tagged shared + readOnly + department so the
+      // UI renders them non-editable, additive to the existing row fields.
+      for (const f of sharedFolders) {
+        folders.push({ ...f, shared: true, readOnly: true, department: DatabankDepartment.PROCESSING });
+      }
+      for (const f of sharedFiles) {
+        files.push({ ...f, shared: true, readOnly: true, department: DatabankDepartment.PROCESSING });
+      }
+    }
+
+    // canWrite reflects JR's OWN scope; shared-in rows are always readOnly above.
     return { clientId, folders, files, canWrite };
   }
 
@@ -409,6 +581,7 @@ export class DatabankService {
       page?: number;
       pageSize?: number;
     },
+    viewerDept: DatabankDepartment,
   ) {
     if (params.clientId && params.personal) {
       throw new BadRequestException('Provide either clientId or personal: true, not both.');
@@ -417,6 +590,25 @@ export class DatabankService {
     if (params.clientId) {
       await this.assertClientReadAccess(params.clientId, user);
       scope = Prisma.sql`"clientId" = ${params.clientId}`;
+      // Separation ON — narrow the client scope by the viewer's department.
+      // PROCESSING sees only its own rows; JR sees JR rows plus the Processing
+      // rows shared in to JR (whole-client → TRUE, folder share → folderId in
+      // the bound id array, no share → FALSE). OFF leaves the scope untouched,
+      // so the client's whole databank is searched exactly as before.
+      if (this.separationEnabled()) {
+        if (viewerDept === DatabankDepartment.PROCESSING) {
+          scope = Prisma.sql`${scope} AND "department" = 'PROCESSING'`;
+        } else {
+          const shareScope = await this.jrReadableProcessingScope(params.clientId);
+          const sharePredicate =
+            shareScope === 'ALL'
+              ? Prisma.sql`TRUE`
+              : shareScope === 'NONE'
+                ? Prisma.sql`FALSE`
+                : Prisma.sql`"folderId" = ANY(${shareScope.folderIds}::text[])`;
+          scope = Prisma.sql`${scope} AND ("department" = 'JR' OR ("department" = 'PROCESSING' AND ${sharePredicate}))`;
+        }
+      }
     } else if (params.personal) {
       this.assertPersonalAccess(user.id, user);
       scope = Prisma.sql`"ownerUserId" = ${user.id}`;
@@ -542,7 +734,7 @@ export class DatabankService {
   /** Clients for the cross-client landing page. Every processing user sees ALL
    *  clients (read-only on the ones not assigned to them — write is gated
    *  per-action). Each row carries its databank file count. */
-  async listClients(user: RequestUser, q?: string) {
+  async listClients(user: RequestUser, viewerDept: DatabankDepartment, q?: string) {
     const where: Prisma.ClientWhereInput = {
       deletedAt: null,
       ...clientTermsWhere(q),
@@ -556,9 +748,15 @@ export class DatabankService {
     });
     if (clients.length === 0) return [];
 
+    // Separation ON — the Processing landing counts ONLY Processing files, so JR
+    // rows on a shared client don't inflate the Processing count. OFF counts
+    // every department exactly as before.
+    const departmentFilter = this.separationEnabled()
+      ? { department: DatabankDepartment.PROCESSING }
+      : {};
     const counts = await this.prisma.databankFile.groupBy({
       by: ['clientId'],
-      where: { deletedAt: null, clientId: { in: clients.map((c) => c.id) } },
+      where: { deletedAt: null, clientId: { in: clients.map((c) => c.id) }, ...departmentFilter },
       _count: { _all: true },
     });
     const countByClient = new Map(counts.map((c) => [c.clientId, c._count._all]));
@@ -584,7 +782,7 @@ export class DatabankService {
    * case but no assigned officer are omitted here (they surface once assigned);
    * the flat {@link listClients} landing still reaches every client.
    */
-  async clientsByAssociate(user: RequestUser, q?: string) {
+  async clientsByAssociate(user: RequestUser, viewerDept: DatabankDepartment, q?: string) {
     const canAll = this.canViewAll(user);
 
     // Every processing user sees all associates' groups (read-only on the ones
@@ -651,9 +849,14 @@ export class DatabankService {
     const clientIds = [...new Set([...groups.values()].flatMap((g) => [...g.clients.keys()]))];
     const countByClient = new Map<string, number>();
     if (clientIds.length > 0) {
+      // Separation ON — Processing landing counts ONLY Processing files (JR rows
+      // on a shared client excluded). OFF counts every department as before.
+      const departmentFilter = this.separationEnabled()
+        ? { department: DatabankDepartment.PROCESSING }
+        : {};
       const counts = await this.prisma.databankFile.groupBy({
         by: ['clientId'],
-        where: { deletedAt: null, clientId: { in: clientIds } },
+        where: { deletedAt: null, clientId: { in: clientIds }, ...departmentFilter },
         _count: { _all: true },
       });
       for (const c of counts) { if (c.clientId) countByClient.set(c.clientId, c._count._all); }
@@ -710,11 +913,23 @@ export class DatabankService {
    * carry no assigned associate yet. Keyed to JR matters, so the JR portal never
    * lists the entire firm. Each row carries its databank file count.
    */
-  async listClientsForJr(_user: RequestUser, q?: string) {
+  async listClientsForJr(_user: RequestUser, viewerDept: DatabankDepartment, q?: string) {
+    const separation = this.separationEnabled();
     const matters = await this.prisma.jrMatter.findMany({
       select: { clientId: true },
     });
-    const clientIds = [...new Set(matters.map((m) => m.clientId))];
+    // Separation ON — the browseable set is JR-matter clients UNION clients with
+    // an active share to JR (a shared client with no JR matter still appears).
+    // OFF — JR-matter clients only, exactly as before.
+    const shareClientIds = separation
+      ? (
+          await this.prisma.databankShare.findMany({
+            where: { toDepartment: DatabankDepartment.JR, revokedAt: null },
+            select: { clientId: true },
+          })
+        ).map((s) => s.clientId)
+      : [];
+    const clientIds = [...new Set([...matters.map((m) => m.clientId), ...shareClientIds])];
     if (clientIds.length === 0) return [];
 
     const where: Prisma.ClientWhereInput = {
@@ -730,6 +945,13 @@ export class DatabankService {
     });
     if (clients.length === 0) return [];
 
+    // Separation ON — fileCount = JR files + shared-in Processing files per the
+    // client's share scope. OFF — one department-agnostic groupBy, as before.
+    if (separation) {
+      return Promise.all(
+        clients.map(async (c) => ({ ...c, fileCount: await this.jrClientFileCount(c.id) })),
+      );
+    }
     const counts = await this.prisma.databankFile.groupBy({
       by: ['clientId'],
       where: { deletedAt: null, clientId: { in: clients.map((c) => c.id) } },
@@ -751,21 +973,38 @@ export class DatabankService {
    * Employee relation (UserAccount has no name column), exactly like
    * JudicialReviewService.listAssociates.
    */
-  async clientsByAssociateForJr(user: RequestUser, q?: string) {
+  async clientsByAssociateForJr(user: RequestUser, viewerDept: DatabankDepartment, q?: string) {
+    const separation = this.separationEnabled();
     const canAll = this.canSeeAllJr(user);
     const matters = await this.prisma.jrMatter.findMany({
       select: { clientId: true, assignedAssociateUserId: true },
     });
-    if (matters.length === 0) {
+
+    // Separation ON — a client shared in to JR with NO JR matter still appears
+    // (under Unassigned). OFF — JR-matter clients only, exactly as before.
+    const shareClientIds = separation
+      ? [
+          ...new Set(
+            (
+              await this.prisma.databankShare.findMany({
+                where: { toDepartment: DatabankDepartment.JR, revokedAt: null },
+                select: { clientId: true },
+              })
+            ).map((s) => s.clientId),
+          ),
+        ]
+      : [];
+
+    if (matters.length === 0 && shareClientIds.length === 0) {
       return { canSeeAll: canAll, viewerOfficerId: user.id, associates: [] };
     }
 
-    const clientIds = [...new Set(matters.map((m) => m.clientId))];
+    const clientIds = [...new Set([...matters.map((m) => m.clientId), ...shareClientIds])];
     const associateIds = [
       ...new Set(matters.map((m) => m.assignedAssociateUserId).filter((v): v is string => !!v)),
     ];
 
-    const [clients, users, counts] = await Promise.all([
+    const [clients, users] = await Promise.all([
       this.prisma.client.findMany({
         where: { id: { in: clientIds }, deletedAt: null },
         select: { id: true, referenceCode: true, firstName: true, lastName: true },
@@ -773,11 +1012,6 @@ export class DatabankService {
       this.prisma.userAccount.findMany({
         where: { id: { in: associateIds } },
         select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } },
-      }),
-      this.prisma.databankFile.groupBy({
-        by: ['clientId'],
-        where: { deletedAt: null, clientId: { in: clientIds } },
-        _count: { _all: true },
       }),
     ]);
 
@@ -788,8 +1022,25 @@ export class DatabankService {
         return [u.id, emp || u.email];
       }),
     );
+
+    // fileCount per client. Separation ON → JR files + shared-in Processing files
+    // (per the client's share scope). OFF → one department-agnostic groupBy, the
+    // same query as before.
     const countByClient = new Map<string, number>();
-    for (const c of counts) { if (c.clientId) countByClient.set(c.clientId, c._count._all); }
+    if (separation) {
+      await Promise.all(
+        clients.map(async (c) => {
+          countByClient.set(c.id, await this.jrClientFileCount(c.id));
+        }),
+      );
+    } else {
+      const counts = await this.prisma.databankFile.groupBy({
+        by: ['clientId'],
+        where: { deletedAt: null, clientId: { in: clientIds } },
+        _count: { _all: true },
+      });
+      for (const c of counts) { if (c.clientId) countByClient.set(c.clientId, c._count._all); }
+    }
 
     // Matters with no associate yet fall into a single "Unassigned" group so
     // the head still sees every JR client (JR currently assigns associates
@@ -814,6 +1065,23 @@ export class DatabankService {
         groups.set(officerId, group);
       }
       group.clients.set(client.id, client);
+    }
+
+    // Separation ON — a client shared in to JR with no JR matter has no
+    // associate, so it surfaces under Unassigned (nothing is hidden).
+    if (separation) {
+      const mattered = new Set(matters.map((m) => m.clientId));
+      for (const cid of shareClientIds) {
+        if (mattered.has(cid)) continue;
+        const client = clientById.get(cid);
+        if (!client) continue; // client soft-deleted — skip
+        let group = groups.get(UNASSIGNED);
+        if (!group) {
+          group = { officerId: UNASSIGNED, officerName: 'Unassigned', clients: new Map() };
+          groups.set(UNASSIGNED, group);
+        }
+        group.clients.set(client.id, client);
+      }
     }
 
     // Search is applied in memory (the JR set is small): a client stays if EVERY

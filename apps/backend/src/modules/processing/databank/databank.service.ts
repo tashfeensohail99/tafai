@@ -563,7 +563,13 @@ export class DatabankService {
     });
     const countByClient = new Map(counts.map((c) => [c.clientId, c._count._all]));
 
-    return clients.map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+    // Default browse hides clients that have no databank files — auto-created /
+    // empty client records would otherwise clutter the list. A search still
+    // surfaces any client (even empty) so an officer can open it and upload its
+    // first file.
+    const hasQuery = !!q?.trim();
+    const withCounts = clients.map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+    return hasQuery ? withCounts : withCounts.filter((c) => c.fileCount > 0);
   }
 
   /**
@@ -656,16 +662,25 @@ export class DatabankService {
     const byName = (a: ClientRow, b: ClientRow) =>
       `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim());
 
+    // Default browse hides empty (file-less) clients; a search shows all
+    // matches so any client can be opened to receive its first file. Associates
+    // left with no visible clients drop out of the list.
+    const hasQuery = !!q?.trim();
     const associates = [...groups.values()]
-      .map((g) => ({
-        officerId: g.officerId,
-        officerName: g.officerName,
-        isSelf: g.officerId === user.id,
-        clientCount: g.clients.size,
-        clients: [...g.clients.values()]
+      .map((g) => {
+        const withCounts = [...g.clients.values()]
           .sort(byName)
-          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 })),
-      }))
+          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+        const visible = hasQuery ? withCounts : withCounts.filter((c) => c.fileCount > 0);
+        return {
+          officerId: g.officerId,
+          officerName: g.officerName,
+          isSelf: g.officerId === user.id,
+          clientCount: visible.length,
+          clients: visible,
+        };
+      })
+      .filter((g) => g.clients.length > 0)
       .sort((a, b) => {
         // The viewer's own databank first, then alphabetical by associate name.
         if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
@@ -817,7 +832,9 @@ export class DatabankService {
             return terms.every((t) => hay.includes(t));
           })
           .sort(byName)
-          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }))
+          // Default browse (no search) hides empty clients; a search shows all.
+          .filter((c) => terms.length > 0 || c.fileCount > 0);
         return {
           officerId: g.officerId,
           officerName: g.officerName,

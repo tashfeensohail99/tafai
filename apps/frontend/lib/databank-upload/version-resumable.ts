@@ -5,7 +5,7 @@
  * for files over the direct-PUT cap (> 2 GB). Dependency-injected so it unit-
  * tests with fakes: the real wiring (the `initVersion` fetch, the shared
  * `makeUploadTransport(base, {})` session transport, and `hashFile`) is built
- * by lib/processing.ts + lib/jr-databank.ts. Mirrors the engine's part /
+ * by lib/databank-client.ts. Mirrors the engine's part /
  * complete protocol but for ONE file with an inline 0..1 progress bar. It never
  * tracks ETags — the backend completes from storage `ListParts`, so a part
  * upload is just a PUT of the slice. Keep it standalone: do NOT reach into the

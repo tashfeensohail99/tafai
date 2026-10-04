@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { DatabankDepartment } from '@prisma/client';
 import type { Response } from 'express';
 import { diskStorage } from 'multer';
 import { tmpdir } from 'os';
@@ -75,6 +76,10 @@ function parseFolderId(v?: string): string | null | undefined {
 const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 const READ = ['processing.case.view_assigned', 'processing.case.view_all'] as const;
 const WRITE = 'processing.document.upload';
+/** This portal is PROCESSING. Every databank row created through it is stamped
+ *  with this HARDCODED department — never read from the request body/DTO/query,
+ *  so a caller can't choose another department's tag (Processing/JR separation). */
+const DEPARTMENT = DatabankDepartment.PROCESSING;
 
 @Controller('processing/databank')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -149,7 +154,7 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string,
   ) {
-    return this.databank.createPersonalFolder(user, dto, userId);
+    return this.databank.createPersonalFolder(user, dto, DEPARTMENT, userId);
   }
 
   @Post('me/files')
@@ -162,7 +167,7 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string,
   ) {
-    return this.databank.uploadPersonalFile(user, file, folderId || null, source, userId);
+    return this.databank.uploadPersonalFile(user, file, folderId || null, source, DEPARTMENT, userId);
   }
 
   // ---- Folders ------------------------------------------------------------
@@ -174,7 +179,7 @@ export class DatabankController {
     @Body() dto: CreateFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.createFolder(clientId, dto, user);
+    return this.databank.createFolder(clientId, dto, user, DEPARTMENT);
   }
 
   /** Get-or-create a dropped folder tree in one call: `paths` (relative to
@@ -187,7 +192,7 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string,
   ) {
-    return this.databank.ensureFolderPaths(dto, user, userId);
+    return this.databank.ensureFolderPaths(dto, user, DEPARTMENT, userId);
   }
 
   @Patch('folders/:folderId')
@@ -230,7 +235,7 @@ export class DatabankController {
   @RequirePermissions(WRITE)
   initUploads(@Body() dto: InitUploadsDto, @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string) {
-    return this.uploads.init(dto, user, userId);
+    return this.uploads.init(dto, user, DEPARTMENT, userId);
   }
 
   @Post('uploads/complete')
@@ -286,7 +291,7 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string,
   ) {
-    return this.databank.commitDirectUpload(dto, user, userId);
+    return this.databank.commitDirectUpload(dto, user, DEPARTMENT, userId);
   }
 
   // ---- Files --------------------------------------------------------------
@@ -306,7 +311,7 @@ export class DatabankController {
     @Body('source') source: string | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.uploadFile(clientId, file, folderId || null, source, user);
+    return this.databank.uploadFile(clientId, file, folderId || null, source, user, DEPARTMENT);
   }
 
   @Get('files/:fileId/signed-url')
@@ -345,7 +350,7 @@ export class DatabankController {
     @Body() dto: CopyFileDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.copyFile(fileId, dto, user);
+    return this.databank.copyFile(fileId, dto, user, DEPARTMENT);
   }
 
   @Post('folders/:folderId/copy')
@@ -356,7 +361,7 @@ export class DatabankController {
     @Body() dto: CopyFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.copyFolder(folderId, dto, user);
+    return this.databank.copyFolder(folderId, dto, user, DEPARTMENT);
   }
 
   @Delete('files/:fileId')
@@ -417,7 +422,7 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
     @Query('userId') userId?: string,
   ) {
-    return this.uploads.initVersion(fileId, dto, user, userId);
+    return this.uploads.initVersion(fileId, dto, user, DEPARTMENT, userId);
   }
 
   @Post('files/:fileId/versions/commit')

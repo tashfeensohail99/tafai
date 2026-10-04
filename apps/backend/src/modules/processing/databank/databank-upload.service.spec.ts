@@ -5,10 +5,13 @@ import {
   GoneException,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { DatabankDepartment, Prisma } from '@prisma/client';
 import { DatabankUploadService, safeMimeType } from './databank-upload.service';
 import { DatabankTargetFileGoneError } from './databank.service';
 import { GiB, MiB } from './upload-plan';
+
+/** This spec drives the upload service as the PROCESSING portal would. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * Unit tests for resumable databank uploads (Databank Phase 1). Prisma, storage
@@ -125,7 +128,7 @@ describe('DatabankUploadService.init', () => {
   it('authorizes first, then falls back to the proxy path in dev storage modes', async () => {
     const { svc, storage, databank } = harness();
     storage.supportsDirectUpload = false;
-    expect(await svc.init({ clientId: 'c1', files: [] } as never, USER)).toEqual({ mode: 'proxy' });
+    expect(await svc.init({ clientId: 'c1', files: [] } as never, USER, DEPT)).toEqual({ mode: 'proxy' });
     expect(databank.resolveWriteScope).toHaveBeenCalled();
   });
 
@@ -153,6 +156,7 @@ describe('DatabankUploadService.init', () => {
         ],
       } as never,
       USER,
+      DEPT,
     );
 
     if (res.mode !== 'direct') throw new Error('expected direct mode');
@@ -180,7 +184,7 @@ describe('DatabankUploadService.init', () => {
   it('[review] reports a file whose completion is already running as in-progress, not a new upload', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([session({ status: 'COMPLETING' })]);
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
     expect(storage.createMultipartUpload).not.toHaveBeenCalled();
     expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
@@ -188,7 +192,7 @@ describe('DatabankUploadService.init', () => {
 
   it('[review] rejects the same file twice in one batch instead of opening two sessions', async () => {
     const { svc, prisma } = harness();
-    const res = await svc.init({ clientId: 'c1', files: [file('a.pdf', 10, 'a'), file('a.pdf', 10, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('a.pdf', 10, 'a'), file('a.pdf', 10, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results.map((r) => r.status)).toEqual(['upload', 'rejected']);
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data).toHaveLength(1);
   });
@@ -198,7 +202,7 @@ describe('DatabankUploadService.init', () => {
     prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);
     storage.listAllParts.mockRejectedValueOnce(nosuch());
     storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
     expect(prisma.databankUpload.updateMany).toHaveBeenCalledWith({
       where: { id: 's1', status: 'UPLOADING' },
@@ -209,7 +213,7 @@ describe('DatabankUploadService.init', () => {
 
   it('[review] matches a COMPLETING session even past its resume deadline (no second upload)', async () => {
     const { svc, prisma } = harness();
-    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     const where = prisma.databankUpload.findMany.mock.calls[0][0].where;
     expect(where.OR).toEqual([
       { status: 'UPLOADING', expiresAt: { gt: expect.any(Date) } },
@@ -220,7 +224,7 @@ describe('DatabankUploadService.init', () => {
   it('[P3 PR-2] the batch init() resume/rival queries exclude VERSION sessions (targetFileId: null)', async () => {
     const { svc, prisma } = harness();
     // Forces the race-guard insert txn to run, so the rivals query is issued too.
-    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     // A new-file upload must NEVER adopt a resumable new-VERSION session (which
     // would attach its bytes as a version of an unrelated file at commit).
     for (const call of prisma.databankUpload.findMany.mock.calls) {
@@ -232,7 +236,7 @@ describe('DatabankUploadService.init', () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);
     storage.listAllParts.mockRejectedValueOnce(nosuch());
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(prisma.databankUpload.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 's1', status: 'UPLOADING' }, data: expect.objectContaining({ status: 'ABORTED' }) }),
     );
@@ -245,7 +249,7 @@ describe('DatabankUploadService.init', () => {
     prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);
     storage.listAllParts.mockRejectedValueOnce(nosuch());
     prisma.databankUpload.updateMany.mockResolvedValueOnce({ count: 0 }); // someone else moved it
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
     expect(storage.createMultipartUpload).not.toHaveBeenCalled();
   });
@@ -256,6 +260,7 @@ describe('DatabankUploadService.init', () => {
     const res = await svc.init(
       { clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a'), file('small.pdf', 10, 'b')] } as never,
       USER,
+      DEPT,
     );
     expect(res.mode === 'direct' && res.results.map((r) => r.status)).toEqual(['retry', 'upload']);
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data.map((r: { fileName: string }) => r.fileName)).toEqual([
@@ -265,7 +270,7 @@ describe('DatabankUploadService.init', () => {
 
   it('[review] never stores an executable content type as declared', async () => {
     const { svc, prisma } = harness();
-    await svc.init({ clientId: 'c1', files: [file('page.html', 10, 'a', { mimeType: 'text/html' })] } as never, USER);
+    await svc.init({ clientId: 'c1', files: [file('page.html', 10, 'a', { mimeType: 'text/html' })] } as never, USER, DEPT);
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data[0].mimeType).toBe('application/octet-stream');
   });
 
@@ -273,7 +278,7 @@ describe('DatabankUploadService.init', () => {
     const { svc, storage, databank } = harness();
     process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
     try {
-      expect(await svc.init({ clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a')] } as never, USER)).toEqual({ mode: 'proxy' });
+      expect(await svc.init({ clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a')] } as never, USER, DEPT)).toEqual({ mode: 'proxy' });
       expect(databank.resolveWriteScope).toHaveBeenCalled();
       expect(storage.createMultipartUpload).not.toHaveBeenCalled();
     } finally {
@@ -289,6 +294,7 @@ describe('DatabankUploadService.init', () => {
       const res = await svc.init(
         { clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a'), file('new.mp4', 100 * MiB, 'b'), file('virus.exe', 10, 'c')] } as never,
         USER,
+        DEPT,
       );
       if (res.mode !== 'direct') throw new Error('expected direct mode');
       expect(res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
@@ -314,13 +320,14 @@ describe('DatabankUploadService.init', () => {
           files: [file('saved.pdf', 500, 'a'), file('legacy.pdf', 700, 'c'), file('new.pdf', 10, 'b')],
         } as never,
         USER,
+        DEPT,
       );
       if (res.mode !== 'direct') throw new Error('expected direct mode: some files are already there');
       expect(res.results.map((r) => r.status)).toEqual(['already-uploaded', 'possible-duplicate', 'retry']);
       expect(storage.createMultipartUpload).not.toHaveBeenCalled();
       expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
       // the new file, asked again on its own: nothing is there → the standard way
-      const again = await svc.init({ clientId: 'c1', files: [file('new.pdf', 10, 'b')] } as never, USER);
+      const again = await svc.init({ clientId: 'c1', files: [file('new.pdf', 10, 'b')] } as never, USER, DEPT);
       expect(again).toEqual({ mode: 'proxy' });
     } finally {
       delete process.env.DATABANK_RESUMABLE_UPLOADS;
@@ -333,10 +340,10 @@ describe('DatabankUploadService.init', () => {
     h.storage.listAllParts.mockResolvedValueOnce(parts(2));
     process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
     try {
-      const res = await h.svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+      const res = await h.svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
       expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'upload', uploadId: 's1', resumed: true });
       const h2 = harness();
-      const res2 = await h2.svc.init({ clientId: 'c1', files: [file('virus.exe', 10, 'c'), file('new.pdf', 10, 'd')] } as never, USER);
+      const res2 = await h2.svc.init({ clientId: 'c1', files: [file('virus.exe', 10, 'c'), file('new.pdf', 10, 'd')] } as never, USER, DEPT);
       expect(res2).toEqual({ mode: 'proxy' });
       expect(h2.storage.createMultipartUpload).not.toHaveBeenCalled();
       expect(h2.prisma.$transaction).not.toHaveBeenCalled();
@@ -347,14 +354,14 @@ describe('DatabankUploadService.init', () => {
 
   it('[initrace r1] the insert transaction waits for a pool connection like a plain query (maxWait 10 s, not Prisma\'s 2 s)', async () => {
     const { svc, prisma } = harness();
-    await svc.init({ clientId: 'c1', files: [file('a.pdf', 10, 'a')] } as never, USER);
+    await svc.init({ clientId: 'c1', files: [file('a.pdf', 10, 'a')] } as never, USER, DEPT);
     const call = prisma.$transaction.mock.calls.find((c: unknown[]) => typeof c[0] === 'function');
     expect(call![1]).toMatchObject({ timeout: 30_000, maxWait: 10_000 });
   });
 
   it('[follow-up] serialises session creation per file identity: one sorted lock statement inside the insert transaction', async () => {
     const { svc, prisma } = harness();
-    await svc.init({ clientId: 'c1', files: [file('b.pdf', 10, 'b'), file('a.pdf', 10, 'a')] } as never, USER);
+    await svc.init({ clientId: 'c1', files: [file('b.pdf', 10, 'b'), file('a.pdf', 10, 'a')] } as never, USER, DEPT);
     expect(prisma.$transaction).toHaveBeenCalled();
     const lock = prisma.$executeRaw.mock.calls.find((c: unknown[]) => String((c[0] as string[]).join('?')).includes('pg_advisory_xact_lock(1145194035'));
     expect(lock).toBeDefined();
@@ -373,7 +380,7 @@ describe('DatabankUploadService.init', () => {
       .mockResolvedValueOnce([]) // step 2: nothing open yet
       .mockResolvedValueOnce([session({ id: 'winner' })]); // under the lock: the racing init's session
     storage.listAllParts.mockResolvedValueOnce(parts(1)); // the winner already has part 1
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
     expect(storage.abortMultipartUpload).toHaveBeenCalledWith(expect.any(String), 'r2-new');
     expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'upload', uploadId: 'winner', resumed: true, doneParts: [1] });
@@ -382,7 +389,7 @@ describe('DatabankUploadService.init', () => {
   it('[follow-up] loses the race to a session that is already COMPLETING: follows it (in-progress)', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session({ id: 'w2', status: 'COMPLETING' })]);
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 'w2' });
     expect(storage.abortMultipartUpload).toHaveBeenCalledWith(expect.any(String), 'r2-new');
     expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
@@ -395,6 +402,7 @@ describe('DatabankUploadService.init', () => {
     const res = await svc.init(
       { clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a'), file('other.pdf', 10, 'b')] } as never,
       USER,
+      DEPT,
     );
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data.map((r: { fileName: string }) => r.fileName)).toEqual(['other.pdf']);
     expect(res.mode === 'direct' && res.results.map((r) => (r as { uploadId?: string }).uploadId)).toEqual(['w', expect.any(String)]);
@@ -404,14 +412,14 @@ describe('DatabankUploadService.init', () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session({ id: 'w' })]);
     storage.listAllParts.mockRejectedValueOnce(new Error('503 from storage'));
-    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER, DEPT);
     expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'retry' });
   });
 
   it('aborts freshly created R2 uploads if recording the sessions fails', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.createMany.mockRejectedValueOnce(new Error('db down'));
-    await expect(svc.init({ clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a')] } as never, USER)).rejects.toThrow('db down');
+    await expect(svc.init({ clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a')] } as never, USER, DEPT)).rejects.toThrow('db down');
     expect(storage.abortMultipartUpload).toHaveBeenCalledWith(expect.any(String), 'r2-new');
   });
 });
@@ -869,7 +877,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
   it('falls back to the proxy path in dev storage modes (before any auth)', async () => {
     const h = harness();
     h.storage.supportsDirectUpload = false;
-    expect(await h.svc.initVersion('F1', vdto() as never, USER)).toEqual({ mode: 'proxy' });
+    expect(await h.svc.initVersion('F1', vdto() as never, USER, DEPT)).toEqual({ mode: 'proxy' });
     expect(h.databank.loadFileForVersionWrite).not.toHaveBeenCalled();
   });
 
@@ -878,7 +886,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
     h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
     process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
     try {
-      expect(await h.svc.initVersion('F1', vdto() as never, USER)).toEqual({ mode: 'proxy' });
+      expect(await h.svc.initVersion('F1', vdto() as never, USER, DEPT)).toEqual({ mode: 'proxy' });
       expect(h.databank.loadFileForVersionWrite).toHaveBeenCalledWith('F1', USER);
       expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
     } finally {
@@ -889,7 +897,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
   it('rejects a version larger than the per-file cap (a rejected InitResult, never a session)', async () => {
     const h = harness();
     h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
-    const res = await h.svc.initVersion('F1', vdto({ fileName: 'huge.iso', sizeBytes: 51 * GiB, sha256: H('e') }) as never, USER);
+    const res = await h.svc.initVersion('F1', vdto({ fileName: 'huge.iso', sizeBytes: 51 * GiB, sha256: H('e') }) as never, USER, DEPT);
     expect(res.mode === 'direct' && res.result).toMatchObject({ index: 0, status: 'rejected' });
     expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
     expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
@@ -899,7 +907,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
     const h = harness();
     h.databank.loadFileForVersionWrite.mockResolvedValueOnce({ id: 'F1', clientId: 'c1', ownerUserId: null, folderId: 'FD' });
     h.prisma.databankUpload.findFirst.mockResolvedValue(null); // resume probe + in-txn re-check both find nothing
-    const res = await h.svc.initVersion('F1', vdto() as never, USER);
+    const res = await h.svc.initVersion('F1', vdto() as never, USER, DEPT);
     if (res.mode !== 'direct') throw new Error('expected direct mode');
     expect(res.result).toMatchObject({ status: 'upload', strategy: 'MULTIPART', resumed: false });
     const row = h.prisma.databankUpload.create.mock.calls[0][0].data;
@@ -919,7 +927,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
     h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
     h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ id: 'v-sess', targetFileId: 'F1' }));
     h.storage.listAllParts.mockResolvedValueOnce(parts(2));
-    const res = await h.svc.initVersion('F1', vdto({ sizeBytes: 40 * MiB }) as never, USER);
+    const res = await h.svc.initVersion('F1', vdto({ sizeBytes: 40 * MiB }) as never, USER, DEPT);
     if (res.mode !== 'direct') throw new Error('expected direct mode');
     expect(res.result).toMatchObject({ status: 'upload', uploadId: 'v-sess', resumed: true, doneParts: [1, 2] });
     expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
@@ -930,7 +938,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
     const h = harness();
     h.databank.loadFileForVersionWrite.mockResolvedValueOnce(FILE);
     h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ id: 'v-sess', status: 'COMPLETING', targetFileId: 'F1' }));
-    const res = await h.svc.initVersion('F1', vdto() as never, USER);
+    const res = await h.svc.initVersion('F1', vdto() as never, USER, DEPT);
     expect(res.mode === 'direct' && res.result).toEqual({ index: 0, status: 'in-progress', uploadId: 'v-sess' });
     expect(h.prisma.databankUpload.create).not.toHaveBeenCalled();
   });

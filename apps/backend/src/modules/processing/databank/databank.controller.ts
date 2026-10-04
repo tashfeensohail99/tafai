@@ -95,7 +95,7 @@ export class DatabankController {
   @Get('clients')
   @RequireAnyPermissions(...READ)
   listClients(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
-    return this.databank.listClients(user, q);
+    return this.databank.listClients(user, DEPARTMENT, q);
   }
 
   /** Associate-organised landing: clients grouped by the officer they belong to
@@ -103,14 +103,14 @@ export class DatabankController {
   @Get('clients/by-associate')
   @RequireAnyPermissions(...READ)
   listByAssociate(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
-    return this.databank.clientsByAssociate(user, q);
+    return this.databank.clientsByAssociate(user, DEPARTMENT, q);
   }
 
   /** The full folder tree + files for one client. */
   @Get('clients/:clientId/tree')
   @RequireAnyPermissions(...READ)
   getTree(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.getTree(clientId, user);
+    return this.databank.getTree(clientId, user, DEPARTMENT);
   }
 
   /**
@@ -134,7 +134,7 @@ export class DatabankController {
         : undefined,
       page: dto.page,
       pageSize: dto.pageSize,
-    });
+    }, DEPARTMENT);
   }
 
   // ---- My workspace (an associate's PERSONAL folders, not tied to a client) --

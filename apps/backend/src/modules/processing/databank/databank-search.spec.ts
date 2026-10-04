@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { DatabankDepartment } from '@prisma/client';
 import { DatabankService } from './databank.service';
 
 /**
@@ -49,7 +50,7 @@ function harness() {
 describe('DatabankService.searchDatabank', () => {
   it('client scope: authorizes via assertClientReadAccess and returns the paginated shape', async () => {
     const { svc, s, prisma } = harness();
-    const out = await svc.searchDatabank(USER, { clientId: 'c1', q: 'passport' });
+    const out = await svc.searchDatabank(USER, { clientId: 'c1', q: 'passport' }, DatabankDepartment.PROCESSING);
 
     expect(s.assertClientReadAccess).toHaveBeenCalledWith('c1', USER);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2); // results + facets
@@ -67,27 +68,27 @@ describe('DatabankService.searchDatabank', () => {
 
   it('personal scope: authorizes via assertPersonalAccess for the caller', async () => {
     const { svc, s } = harness();
-    await svc.searchDatabank(USER, { personal: true });
+    await svc.searchDatabank(USER, { personal: true }, DatabankDepartment.PROCESSING);
     expect(s.assertPersonalAccess).toHaveBeenCalledWith('u1', USER);
   });
 
   it('scopes the query to the caller for personal search (ownerUserId bound)', async () => {
     const { svc, resultsQ } = harness();
-    await svc.searchDatabank(USER, { personal: true });
+    await svc.searchDatabank(USER, { personal: true }, DatabankDepartment.PROCESSING);
     expect(String(resultsQ().sql)).toContain('"ownerUserId" =');
     expect(resultsQ().values).toContain('u1');
   });
 
   it('400s when NEITHER clientId nor personal is given (before any query)', async () => {
     const { svc, prisma } = harness();
-    await expect(svc.searchDatabank(USER, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.searchDatabank(USER, {}, DatabankDepartment.PROCESSING)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('400s when BOTH clientId and personal are given (before any query)', async () => {
     const { svc, prisma, s } = harness();
     await expect(
-      svc.searchDatabank(USER, { clientId: 'c1', personal: true }),
+      svc.searchDatabank(USER, { clientId: 'c1', personal: true }, DatabankDepartment.PROCESSING),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(s.assertClientReadAccess).not.toHaveBeenCalled();
@@ -95,7 +96,7 @@ describe('DatabankService.searchDatabank', () => {
 
   it('clamps pagination: pageSize > 200 => 200, page < 1 => 1', async () => {
     const { svc, resultsQ } = harness();
-    const out = await svc.searchDatabank(USER, { clientId: 'c1', page: 0, pageSize: 9999 });
+    const out = await svc.searchDatabank(USER, { clientId: 'c1', page: 0, pageSize: 9999 }, DatabankDepartment.PROCESSING);
     expect(out.page).toBe(1);
     expect(out.pageSize).toBe(200);
     // LIMIT 200 OFFSET 0 are bound values, not literals.
@@ -104,13 +105,13 @@ describe('DatabankService.searchDatabank', () => {
 
   it('clamps pageSize below 1 up to 1', async () => {
     const { svc } = harness();
-    const out = await svc.searchDatabank(USER, { clientId: 'c1', pageSize: 0 });
+    const out = await svc.searchDatabank(USER, { clientId: 'c1', pageSize: 0 }, DatabankDepartment.PROCESSING);
     expect(out.pageSize).toBe(1);
   });
 
   it('empty/blank q => NO full-text predicate, orders by createdAt only', async () => {
     const { svc, resultsQ } = harness();
-    await svc.searchDatabank(USER, { clientId: 'c1', q: '   ' });
+    await svc.searchDatabank(USER, { clientId: 'c1', q: '   ' }, DatabankDepartment.PROCESSING);
     const sql = String(resultsQ().sql);
     expect(sql).not.toContain('websearch_to_tsquery');
     expect(sql).toContain('ORDER BY "createdAt" DESC');
@@ -120,7 +121,7 @@ describe('DatabankService.searchDatabank', () => {
   it('non-empty q => bound parameter, NEVER concatenated into SQL (injection-safe)', async () => {
     const { svc, calls, resultsQ } = harness();
     const needle = "o'brien'; DROP TABLE x; --";
-    await svc.searchDatabank(USER, { clientId: 'c1', q: needle });
+    await svc.searchDatabank(USER, { clientId: 'c1', q: needle }, DatabankDepartment.PROCESSING);
 
     // No query text ever contains the raw q — every one is a Prisma.Sql template.
     for (const c of calls) {
@@ -136,7 +137,7 @@ describe('DatabankService.searchDatabank', () => {
 
   it('non-empty q matches tags by substring (tags are unstemmed vs the english query, so ILIKE covers them)', async () => {
     const { svc, resultsQ } = harness();
-    await svc.searchDatabank(USER, { clientId: 'c1', q: 'visas' });
+    await svc.searchDatabank(USER, { clientId: 'c1', q: 'visas' }, DatabankDepartment.PROCESSING);
     const sql = String(resultsQ().sql);
     // fileName AND the joined tags both get a substring fallback alongside @@.
     expect(sql).toContain(`"fileName" ILIKE`);
@@ -145,17 +146,17 @@ describe('DatabankService.searchDatabank', () => {
 
   it('ORDER BY always ends with the unique "id" tiebreaker (stable pagination)', async () => {
     const { svc, resultsQ } = harness();
-    await svc.searchDatabank(USER, { clientId: 'c1', q: 'passport' });
+    await svc.searchDatabank(USER, { clientId: 'c1', q: 'passport' }, DatabankDepartment.PROCESSING);
     expect(String(resultsQ().sql)).toMatch(/ORDER BY ts_rank[\s\S]*"createdAt" DESC, "id" DESC/);
 
     const noQ = harness();
-    await noQ.svc.searchDatabank(USER, { clientId: 'c1' });
+    await noQ.svc.searchDatabank(USER, { clientId: 'c1' }, DatabankDepartment.PROCESSING);
     expect(String(noQ.resultsQ().sql)).toContain('ORDER BY "createdAt" DESC, "id" DESC');
   });
 
   it('a type filter narrows results and total is summed from the selected facet buckets', async () => {
     const { svc, resultsQ, facetQ } = harness();
-    const out = await svc.searchDatabank(USER, { clientId: 'c1', types: ['image', 'pdf', 'bogus'] });
+    const out = await svc.searchDatabank(USER, { clientId: 'c1', types: ['image', 'pdf', 'bogus'] }, DatabankDepartment.PROCESSING);
     // Results query carries the mime-bucket predicate; facet query does NOT.
     expect(String(resultsQ().sql)).toContain('ILIKE'); // image bucket predicate
     expect(String(facetQ().sql)).not.toContain('LIMIT');
@@ -166,7 +167,7 @@ describe('DatabankService.searchDatabank', () => {
 
   it('folderId null scopes to the databank root', async () => {
     const { svc, resultsQ } = harness();
-    await svc.searchDatabank(USER, { clientId: 'c1', folderId: null });
+    await svc.searchDatabank(USER, { clientId: 'c1', folderId: null }, DatabankDepartment.PROCESSING);
     expect(String(resultsQ().sql)).toContain('"folderId" IS NULL');
   });
 });

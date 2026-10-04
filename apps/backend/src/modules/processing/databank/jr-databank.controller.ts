@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { DatabankDepartment } from '@prisma/client';
 import type { Response } from 'express';
 import { diskStorage } from 'multer';
 import { tmpdir } from 'os';
@@ -73,6 +74,10 @@ function parseFolderId(v?: string): string | null | undefined {
 const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 const READ = 'jr.portal.view';
 const WRITE = 'jr.artifact.author';
+/** This portal is JR. Every databank row created through it is stamped with this
+ *  HARDCODED department — never read from the request body/DTO/query, so a JR
+ *  user can't upload a row tagged PROCESSING (Processing/JR separation). */
+const DEPARTMENT = DatabankDepartment.JR;
 
 @Controller('jr/databank')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -144,7 +149,7 @@ export class JrDatabankController {
   @Post('me/folders')
   @RequirePermissions(WRITE)
   createMyFolder(@Body() dto: CreateFolderDto, @CurrentUser() user: RequestUser) {
-    return this.databank.createPersonalFolder(user, dto);
+    return this.databank.createPersonalFolder(user, dto, DEPARTMENT);
   }
 
   @Post('me/files')
@@ -156,7 +161,7 @@ export class JrDatabankController {
     @Body('source') source: string | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.uploadPersonalFile(user, file, folderId || null, source);
+    return this.databank.uploadPersonalFile(user, file, folderId || null, source, DEPARTMENT);
   }
 
   // ---- Resumable uploads (multi-GB; browser → R2 multipart, Phase 1) ------
@@ -168,7 +173,7 @@ export class JrDatabankController {
   @Post('uploads/init')
   @RequirePermissions(WRITE)
   initUploads(@Body() dto: InitUploadsDto, @CurrentUser() user: RequestUser) {
-    return this.uploads.init(dto, user);
+    return this.uploads.init(dto, user, DEPARTMENT);
   }
 
   @Post('uploads/complete')
@@ -215,7 +220,7 @@ export class JrDatabankController {
   @Post('uploads/commit')
   @RequirePermissions(WRITE)
   commitUpload(@Body() dto: CommitUploadDto, @CurrentUser() user: RequestUser) {
-    return this.databank.commitDirectUpload(dto, user);
+    return this.databank.commitDirectUpload(dto, user, DEPARTMENT);
   }
 
   // ---- Folders ------------------------------------------------------------
@@ -227,7 +232,7 @@ export class JrDatabankController {
     @Body() dto: CreateFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.createFolder(clientId, dto, user);
+    return this.databank.createFolder(clientId, dto, user, DEPARTMENT);
   }
 
   /** Get-or-create a dropped folder tree in one call (see the Processing
@@ -235,7 +240,7 @@ export class JrDatabankController {
   @Post('folders/ensure-paths')
   @RequirePermissions(WRITE)
   ensureFolderPaths(@Body() dto: EnsureFolderPathsDto, @CurrentUser() user: RequestUser) {
-    return this.databank.ensureFolderPaths(dto, user);
+    return this.databank.ensureFolderPaths(dto, user, DEPARTMENT);
   }
 
   @Patch('folders/:folderId')
@@ -285,7 +290,7 @@ export class JrDatabankController {
     @Body('source') source: string | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.uploadFile(clientId, file, folderId || null, source, user);
+    return this.databank.uploadFile(clientId, file, folderId || null, source, user, DEPARTMENT);
   }
 
   @Get('files/:fileId/signed-url')
@@ -324,7 +329,7 @@ export class JrDatabankController {
     @Body() dto: CopyFileDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.copyFile(fileId, dto, user);
+    return this.databank.copyFile(fileId, dto, user, DEPARTMENT);
   }
 
   @Post('folders/:folderId/copy')
@@ -335,7 +340,7 @@ export class JrDatabankController {
     @Body() dto: CopyFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.copyFolder(folderId, dto, user);
+    return this.databank.copyFolder(folderId, dto, user, DEPARTMENT);
   }
 
   @Delete('files/:fileId')
@@ -395,7 +400,7 @@ export class JrDatabankController {
     @Body() dto: InitVersionDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.uploads.initVersion(fileId, dto, user);
+    return this.uploads.initVersion(fileId, dto, user, DEPARTMENT);
   }
 
   @Post('files/:fileId/versions/commit')

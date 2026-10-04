@@ -7,7 +7,7 @@ import {
   NotFoundException,
   PreconditionFailedException,
 } from '@nestjs/common';
-import { DatabankFileSource, Prisma } from '@prisma/client';
+import { DatabankDepartment, DatabankFileSource, Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -941,32 +941,44 @@ export class DatabankService {
     return folder;
   }
 
-  async createFolder(clientId: string, dto: CreateFolderDto, user: RequestUser) {
+  async createFolder(
+    clientId: string,
+    dto: CreateFolderDto,
+    user: RequestUser,
+    department: DatabankDepartment,
+  ) {
     await this.assertClientWriteAccess(clientId, user);
-    return this.createFolderIn({ clientId, ownerUserId: null }, dto, user);
+    return this.createFolderIn({ clientId, ownerUserId: null }, dto, user, department);
   }
 
   /** Create a folder in an associate's PERSONAL databank (ownerUserId). Defaults
    *  to the caller's own; a manager may target another associate via targetUserId. */
-  async createPersonalFolder(user: RequestUser, dto: CreateFolderDto, targetUserId?: string) {
+  async createPersonalFolder(
+    user: RequestUser,
+    dto: CreateFolderDto,
+    department: DatabankDepartment,
+    targetUserId?: string,
+  ) {
     const ownerUserId = targetUserId ?? user.id;
     this.assertPersonalAccess(ownerUserId, user);
-    return this.createFolderIn({ clientId: null, ownerUserId }, dto, user);
+    return this.createFolderIn({ clientId: null, ownerUserId }, dto, user, department);
   }
 
   /** Create one folder in an already-AUTHORIZED scope ("Passport (2)" on a name
-   *  clash — a hand-made folder is always new; ensure-paths is what merges). */
+   *  clash — a hand-made folder is always new; ensure-paths is what merges). The
+   *  `department` is the CALLING PORTAL's constant (never from the request). */
   private createFolderIn(
     scope: { clientId: string | null; ownerUserId: string | null },
     dto: CreateFolderDto,
     user: RequestUser,
+    department: DatabankDepartment,
   ) {
     return this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
       const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope, tx);
       const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim(), undefined, tx);
       return tx.databankFolder.create({
-        data: { ...scope, parentFolderId, name, createdByUserId: user.id },
+        data: { ...scope, parentFolderId, name, department, createdByUserId: user.id },
         select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
       });
     }, FOLDER_TXN);
@@ -1044,7 +1056,12 @@ export class DatabankService {
    * retry returns the same ids. One lock, one read of the scope's folders, then
    * one insert per ≤1,000 new folders (was one ~540 ms POST per folder).
    */
-  async ensureFolderPaths(dto: EnsureFolderPathsDto, user: RequestUser, targetUserId?: string) {
+  async ensureFolderPaths(
+    dto: EnsureFolderPathsDto,
+    user: RequestUser,
+    department: DatabankDepartment,
+    targetUserId?: string,
+  ) {
     const { clientId, ownerUserId } = await this.resolveWriteScope(dto, user, targetUserId);
     const scope = { clientId, ownerUserId };
     // Reject malformed paths before touching the database — naming the path,
@@ -1078,7 +1095,7 @@ export class DatabankService {
         // at the end of its INSERT — a parent in the same or an earlier chunk.
         for (let i = 0; i < plan.create.length; i += 1000) {
           await tx.databankFolder.createMany({
-            data: plan.create.slice(i, i + 1000).map((f) => ({ ...f, ...scope, createdByUserId: user.id })),
+            data: plan.create.slice(i, i + 1000).map((f) => ({ ...f, ...scope, department, createdByUserId: user.id })),
           });
         }
         return { folders: plan.folders, created: plan.create.length };
@@ -1215,7 +1232,12 @@ export class DatabankService {
    * or other-client key), and HEADs the object to prove it landed + capture its
    * true size before creating the row.
    */
-  async commitDirectUpload(dto: CommitUploadDto, user: RequestUser, targetUserId?: string) {
+  async commitDirectUpload(
+    dto: CommitUploadDto,
+    user: RequestUser,
+    department: DatabankDepartment,
+    targetUserId?: string,
+  ) {
     this.assertSafeFileName(dto.fileName);
     const scope = await this.resolveWriteScope(dto, user, targetUserId);
     // The key must be EXACTLY what presign issues for this scope, and must not
@@ -1280,6 +1302,7 @@ export class DatabankService {
             storageKey: dto.storageKey,
             mimeType: dto.mimeType,
             fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
+            department,
             source: DatabankFileSource.UPLOAD,
             uploadedByUserId: user.id,
           },
@@ -1309,6 +1332,7 @@ export class DatabankService {
     folderId: string | null | undefined,
     source: string | undefined,
     user: RequestUser,
+    department: DatabankDepartment,
   ) {
     // The upload is written to a Multer temp file on disk (diskStorage), then
     // STREAMED to storage — never buffered whole in RAM — so large files (up
@@ -1347,6 +1371,7 @@ export class DatabankService {
             storageKey: uploaded.key,
             mimeType: file!.mimetype,
             fileSizeBytes: uploaded.sizeBytes,
+            department,
             source: fileSource,
             uploadedByUserId: user.id,
           },
@@ -1366,6 +1391,7 @@ export class DatabankService {
     file: Express.Multer.File | undefined,
     folderId: string | null | undefined,
     source: string | undefined,
+    department: DatabankDepartment,
     targetUserId?: string,
   ) {
     try {
@@ -1398,6 +1424,7 @@ export class DatabankService {
             storageKey: uploaded.key,
             mimeType: file!.mimetype,
             fileSizeBytes: uploaded.sizeBytes,
+            department,
             source: fileSource,
             uploadedByUserId: user.id,
           },
@@ -1503,7 +1530,12 @@ export class DatabankService {
    * a file in the target, so it is gated on the destination just like a direct
    * upload, whether the target is the same client or a different one.
    */
-  async copyFile(fileId: string, dto: CopyFileDto, user: RequestUser) {
+  async copyFile(
+    fileId: string,
+    dto: CopyFileDto,
+    user: RequestUser,
+    department: DatabankDepartment,
+  ) {
     const source = await this.loadFileForRead(fileId, user);
 
     // Resolve the target scope: an explicit targetClientId wins; otherwise copy
@@ -1534,7 +1566,7 @@ export class DatabankService {
       );
     }
 
-    return this.copyOneFile(source, scope, targetFolder, storageFolder, user);
+    return this.copyOneFile(source, scope, targetFolder, storageFolder, user, department);
   }
 
   /**
@@ -1564,6 +1596,7 @@ export class DatabankService {
     destFolderId: string | null,
     storageFolder: string,
     user: RequestUser,
+    department: DatabankDepartment,
   ) {
     const uploaded = await this.storage.copyObject(
       source.storageKey,
@@ -1584,6 +1617,7 @@ export class DatabankService {
           mimeType: source.mimeType,
           fileSizeBytes: source.fileSizeBytes,
           sha256: source.sha256, // same bytes → same hash (duplicate detection)
+          department, // the COPYING portal's department, not the source row's
           source: DatabankFileSource.COPIED,
           copiedFromFileId: source.id,
           uploadedByUserId: user.id,
@@ -1607,7 +1641,12 @@ export class DatabankService {
    * than aborting the batch. A tree beyond the folder/depth ceilings is refused
    * up front, before anything is written.
    */
-  async copyFolder(folderId: string, dto: CopyFolderDto, user: RequestUser) {
+  async copyFolder(
+    folderId: string,
+    dto: CopyFolderDto,
+    user: RequestUser,
+    department: DatabankDepartment,
+  ) {
     const source = await this.loadFolderForRead(folderId, user);
 
     // Resolve the target scope ONCE (explicit client wins; else the source's own
@@ -1722,6 +1761,7 @@ export class DatabankService {
           ownerUserId: scope.ownerUserId,
           parentFolderId: newParent,
           name: id === source.id ? rootName : nameOf.get(id) ?? 'Untitled',
+          department, // the COPYING portal's department
           createdByUserId: user.id,
         };
       });
@@ -1765,7 +1805,7 @@ export class DatabankService {
       }
       try {
         // eslint-disable-next-line no-await-in-loop
-        await this.copyOneFile(file, scope, destFolderId, storageFolder, user);
+        await this.copyOneFile(file, scope, destFolderId, storageFolder, user, department);
         copiedFiles += 1;
       } catch {
         skipped.push({ fileName: file.fileName, reason: 'ERROR' });

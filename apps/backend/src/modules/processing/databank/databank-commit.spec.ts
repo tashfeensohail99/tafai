@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { DatabankDepartment, Prisma } from '@prisma/client';
 import { DatabankService } from './databank.service';
+
+/** This spec drives the service as the PROCESSING portal would. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * The standard (≤ 2 GB) upload's commit: one row per storage key, even when two
@@ -102,7 +105,7 @@ function harness(opts: { headDelayTicks?: number } = {}) {
 describe('DatabankService.commitDirectUpload — one row per key', () => {
   it('records the file with one insert inside a transaction (FOR SHARE on a root folder is a no-op)', async () => {
     const { svc, prisma, log, rows, shape } = harness();
-    const out = await svc.commitDirectUpload(DTO as never, USER);
+    const out = await svc.commitDirectUpload(DTO as never, USER, DEPT);
     // One existing-row look, then the insert inside the txn. A root (null) folder
     // short-circuits lockLiveDestinationFolder, so no FOR SHARE probe is issued.
     expect(log).toEqual(['findFirst', 'create']);
@@ -116,7 +119,7 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
 
   it('two OVERLAPPING commits of one key (a lost reply, retried while the first still runs) make ONE row — both get it', async () => {
     const { svc, rows, log, shape } = harness({ headDelayTicks: 5 }); // both pass the first look before either records
-    const [a, b] = await Promise.all([svc.commitDirectUpload(DTO as never, USER), svc.commitDirectUpload(DTO as never, USER)]);
+    const [a, b] = await Promise.all([svc.commitDirectUpload(DTO as never, USER, DEPT), svc.commitDirectUpload(DTO as never, USER, DEPT)]);
     expect(log.filter((l) => l === 'create')).toHaveLength(2); // (precondition: both really tried to insert)
     expect(rows).toHaveLength(1);
     expect(a.id).toBe(rows[0].id);
@@ -137,7 +140,7 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
         rows.push(fullRow({ id: 'x', ...other }));
         return null;
       });
-      await expect(svc.commitDirectUpload(DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.commitDirectUpload(DTO as never, USER, DEPT)).rejects.toBeInstanceOf(BadRequestException);
       expect(rows).toHaveLength(1);
     }
   });
@@ -145,13 +148,13 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
   it('any other insert error still fails the commit as before', async () => {
     const { svc, prisma } = harness();
     prisma.databankFile.create.mockRejectedValueOnce(new Error('connection lost'));
-    await expect(svc.commitDirectUpload(DTO as never, USER)).rejects.toThrow('connection lost');
+    await expect(svc.commitDirectUpload(DTO as never, USER, DEPT)).rejects.toThrow('connection lost');
   });
 
   it('a plain retried commit (the row exists already) is answered from the first look, without a HEAD', async () => {
     const { svc, storage, rows, prisma, shape } = harness();
     rows.push(fullRow({ id: 'file-1' }));
-    const out = await svc.commitDirectUpload(DTO as never, USER);
+    const out = await svc.commitDirectUpload(DTO as never, USER, DEPT);
     expect(out.id).toBe('file-1');
     expect(Object.keys(out).sort()).toEqual(shape);
     expect(storage.headObjectMeta).not.toHaveBeenCalled();
@@ -162,7 +165,7 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
     const { svc, prisma, rows } = harness();
     (svc as any).assertFolderInScope = jest.fn(async () => 'F1');
     prisma.$queryRaw.mockResolvedValueOnce([{ id: 'F1' }]); // folder live + now share-locked
-    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER);
+    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER, DEPT);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // the FOR SHARE probe
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(rows[0].folderId).toBe('F1');
@@ -173,7 +176,7 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
     const { svc, prisma, rows } = harness();
     (svc as any).assertFolderInScope = jest.fn(async () => 'F1'); // live at the pre-txn check
     prisma.$queryRaw.mockResolvedValueOnce([]); // …but trashed/removed by the time we lock it
-    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER);
+    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER, DEPT);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(rows[0].folderId).toBeNull(); // relocated to root — not left inside the trashed folder
     expect(out.folderId).toBeNull();
@@ -185,7 +188,7 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
     // restoreVersion). Committing it as a NEW file would double-own the object →
     // purging that file would destroy the version's bytes. Must be refused.
     prisma.databankFileVersion.findUnique.mockResolvedValue({ id: 'vX' });
-    await expect(svc.commitDirectUpload(DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.commitDirectUpload(DTO as never, USER, DEPT)).rejects.toBeInstanceOf(BadRequestException);
     expect(rows).toHaveLength(0);
     expect(prisma.databankFile.create).not.toHaveBeenCalled();
   });

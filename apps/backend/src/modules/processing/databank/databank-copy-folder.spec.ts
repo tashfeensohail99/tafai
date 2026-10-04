@@ -1,6 +1,9 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { DatabankFileSource } from '@prisma/client';
+import { DatabankDepartment, DatabankFileSource } from '@prisma/client';
 import { DatabankService } from './databank.service';
+
+/** This spec drives the service as the PROCESSING portal would. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * Databank — recursive folder copy (copyFolder). Prisma + StorageService are
@@ -68,14 +71,14 @@ describe('DatabankService — copyFolder', () => {
     const { svc, tx } = harness();
     (svc as any).assertFolderInScope = jest.fn(async () => 'kid');
     tx.$queryRaw.mockResolvedValue([{ id: 'f1' }]); // assertNoCycle: source IS an ancestor of kid
-    await expect(svc.copyFolder('f1', { targetFolderId: 'kid' }, USER)).rejects.toThrow(/copied into (itself|its own)/i);
+    await expect(svc.copyFolder('f1', { targetFolderId: 'kid' }, USER, DEPT)).rejects.toThrow(/copied into (itself|its own)/i);
     expect(tx.databankFolder.createMany).not.toHaveBeenCalled();
   });
 
   it('2. pasting a folder into itself is refused with the COPY-worded message (both throw sites parametrized)', async () => {
     const { svc, tx } = harness();
     (svc as any).assertFolderInScope = jest.fn(async () => 'f1'); // target === source → self branch
-    await expect(svc.copyFolder('f1', { targetFolderId: 'f1' }, USER)).rejects.toThrow(
+    await expect(svc.copyFolder('f1', { targetFolderId: 'f1' }, USER, DEPT)).rejects.toThrow(
       "A folder can't be copied into itself or one of its own subfolders",
     );
     expect(tx.databankFolder.createMany).not.toHaveBeenCalled();
@@ -85,7 +88,7 @@ describe('DatabankService — copyFolder', () => {
     const { svc, prisma, storage } = harness();
     (svc as any).loadFolderForRead = jest.fn(async () => ({ ...LIVE, clientId: 'cRO' }));
     (svc as any).assertClientWriteAccess = jest.fn().mockRejectedValue(new ForbiddenException());
-    await expect(svc.copyFolder('SRC', {}, USER)).rejects.toThrow(ForbiddenException);
+    await expect(svc.copyFolder('SRC', {}, USER, DEPT)).rejects.toThrow(ForbiddenException);
     expect((svc as any).assertClientWriteAccess).toHaveBeenCalledWith('cRO', USER);
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(storage.copyObject).not.toHaveBeenCalled();
@@ -95,7 +98,7 @@ describe('DatabankService — copyFolder', () => {
     const { svc } = harness();
     (svc as any).loadFolderForRead = jest.fn(async () => ({ ...LIVE, clientId: 'A' }));
     (svc as any).assertClientWriteAccess = jest.fn().mockRejectedValue(new ForbiddenException());
-    await expect(svc.copyFolder('SRC', { targetClientId: 'B' }, USER)).rejects.toThrow(ForbiddenException);
+    await expect(svc.copyFolder('SRC', { targetClientId: 'B' }, USER, DEPT)).rejects.toThrow(ForbiddenException);
     expect((svc as any).assertClientWriteAccess).toHaveBeenCalledWith('B', USER);
   });
 
@@ -103,7 +106,7 @@ describe('DatabankService — copyFolder', () => {
     const { svc, tx } = harness();
     (svc as any).uniqueFolderName = jest.fn(async () => 'Passport (2)');
     tx.databankFolder.findMany.mockResolvedValue([{ id: 'f1', name: 'Passport', parentFolderId: null }]);
-    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     const created = tx.databankFolder.createMany.mock.calls[0][0].data;
     expect(created[0].name).toBe('Passport (2)');
     // excludeId (4th arg) must be undefined — the live source is a real sibling.
@@ -116,7 +119,7 @@ describe('DatabankService — copyFolder', () => {
     prisma.databankFile.findMany.mockResolvedValue([
       { id: 'F1', folderId: 'f1', fileName: 'report.pdf', storageKey: 'k', mimeType: 'application/pdf', fileSizeBytes: BigInt(10), sha256: 'h' },
     ]);
-    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     expect(tx.databankFile.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ fileName: 'report.pdf', source: DatabankFileSource.COPIED }) }),
     );
@@ -129,7 +132,7 @@ describe('DatabankService — copyFolder', () => {
       { id: 'F1', folderId: 'f1', fileName: 'a.pdf', storageKey: 'src', mimeType: 'application/pdf', fileSizeBytes: BigInt(10), sha256: 'h' },
     ]);
     (svc as any).lockLiveDestinationFolder = jest.fn(async () => null); // FOR SHARE found nothing → trashed
-    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     expect(tx.databankFile.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ folderId: null, storageKey: 'copy:src' }) }),
     );
@@ -137,7 +140,7 @@ describe('DatabankService — copyFolder', () => {
 
   it('8. excludes trashed files — the Phase-2 read filters deletedAt:null', async () => {
     const { svc, prisma } = harness();
-    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     expect((svc as any).collectSubtree).toHaveBeenCalled();
     expect(prisma.databankFile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ deletedAt: null }) }),
@@ -151,7 +154,7 @@ describe('DatabankService — copyFolder', () => {
       { id: 'H', folderId: 'f1', fileName: 'huge.bin', storageKey: 'k-huge', mimeType: 'application/octet-stream', fileSizeBytes: BigInt(6 * 1024 ** 3), sha256: 'h1' },
       { id: 'O', folderId: 'f1', fileName: 'ok.pdf', storageKey: 'k-ok', mimeType: 'application/pdf', fileSizeBytes: BigInt(1024), sha256: 'h2' },
     ]);
-    const res = await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    const res = await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     expect(storage.copyObject).toHaveBeenCalledTimes(1);
     expect(storage.copyObject.mock.calls[0][0]).toBe('k-ok'); // huge skipped before any byte copy
     expect(res.copiedFiles).toBe(1);
@@ -162,7 +165,7 @@ describe('DatabankService — copyFolder', () => {
   it('10. refuses a subtree of 1001 files up front and copies nothing (ceiling = the request budget)', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankFile.count.mockResolvedValue(1001);
-    await expect(svc.copyFolder('f1', { targetFolderId: 'dest' }, USER)).rejects.toThrow(/too large to copy in one operation/);
+    await expect(svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT)).rejects.toThrow(/too large to copy in one operation/);
     expect(storage.copyObject).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -174,7 +177,7 @@ describe('DatabankService — copyFolder', () => {
     const rows = ids.map((id, i) => ({ id, parentFolderId: i === 0 ? null : `f${i}` }));
     (svc as any).collectSubtree = jest.fn(async () => ids);
     prisma.databankFolder.findMany.mockResolvedValue(rows);
-    await expect(svc.copyFolder('f1', { targetFolderId: 'dest' }, USER)).rejects.toThrow(/too large/);
+    await expect(svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT)).rejects.toThrow(/too large/);
     expect(storage.copyObject).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -182,7 +185,7 @@ describe('DatabankService — copyFolder', () => {
   it('12. NotFoundException when the source was trashed after being copied to the clipboard (stale-paste safety)', async () => {
     const { svc, tx, storage } = harness();
     (svc as any).loadFolderForRead = jest.fn().mockRejectedValue(new NotFoundException('Folder not found'));
-    await expect(svc.copyFolder('STALE', { targetFolderId: 'dest' }, USER)).rejects.toThrow(NotFoundException);
+    await expect(svc.copyFolder('STALE', { targetFolderId: 'dest' }, USER, DEPT)).rejects.toThrow(NotFoundException);
     expect(storage.copyObject).not.toHaveBeenCalled();
     expect(tx.databankFolder.createMany).not.toHaveBeenCalled();
     expect(tx.databankFile.create).not.toHaveBeenCalled();
@@ -194,7 +197,7 @@ describe('DatabankService — copyFolder', () => {
     prisma.databankFile.findMany.mockResolvedValue([
       { id: 'F1', folderId: 'f1', fileName: 'a.pdf', storageKey: 'k', mimeType: 'application/pdf', fileSizeBytes: BigInt(10), sha256: 'h' },
     ]);
-    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER);
+    await svc.copyFolder('f1', { targetFolderId: 'dest' }, USER, DEPT);
     // skeleton createMany happens before the first byte copy
     expect(order.indexOf('folder.createMany')).toBeLessThan(order.indexOf('copyObject'));
     // one $transaction for Phase 1 + one per copied file

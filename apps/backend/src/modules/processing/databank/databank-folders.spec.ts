@@ -1,5 +1,9 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { DatabankDepartment } from '@prisma/client';
 import { DatabankService } from './databank.service';
+
+/** This spec drives the service as the PROCESSING portal would. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * Folder-structure writes (Databank Phase 1, PR-4): `folders/ensure-paths` and
@@ -62,7 +66,7 @@ describe('DatabankService.ensureFolderPaths', () => {
       return [{ id: 'p', parentFolderId: null, name: 'Passport', createdAt: new Date(0) }];
     });
 
-    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths: ['Passport/Scans', 'Passport'] }, USER);
+    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths: ['Passport/Scans', 'Passport'] }, USER, DEPT);
 
     expect(log).toEqual(['txn:{"timeout":30000}', 'lock', 'folder.findMany', 'folder.createMany']);
     expect(lockKey(prisma)).toBe('databank-folders|client|c1');
@@ -81,6 +85,7 @@ describe('DatabankService.ensureFolderPaths', () => {
       name: 'Scans',
       clientId: 'c1',
       ownerUserId: null,
+      department: DEPT,
       createdByUserId: 'u1',
     });
     expect(out).toEqual({ folders: { 'Passport/Scans': row.id, Passport: 'p' }, created: 1 });
@@ -91,7 +96,7 @@ describe('DatabankService.ensureFolderPaths', () => {
     prisma.databankFolder.findMany.mockResolvedValue([
       { id: 'p', parentFolderId: null, name: 'Passport', createdAt: new Date(0) },
     ]);
-    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths: ['Passport'] }, USER);
+    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths: ['Passport'] }, USER, DEPT);
     expect(prisma.databankFolder.createMany).not.toHaveBeenCalled();
     expect(out).toEqual({ folders: { Passport: 'p' }, created: 0 });
   });
@@ -103,7 +108,7 @@ describe('DatabankService.ensureFolderPaths', () => {
       ownerUserId: 'u9',
       storageFolder: 'databank/users/u9',
     });
-    await svc.ensureFolderPaths({ personal: true, paths: ['Notes'] }, USER, 'u9');
+    await svc.ensureFolderPaths({ personal: true, paths: ['Notes'] }, USER, DEPT, 'u9');
     expect(svc.resolveWriteScope).toHaveBeenCalledWith({ personal: true, paths: ['Notes'] }, USER, 'u9');
     expect(lockKey(prisma)).toBe('databank-folders|user|u9');
     expect(prisma.databankFolder.createMany.mock.calls[0][0].data[0]).toMatchObject({
@@ -114,7 +119,7 @@ describe('DatabankService.ensureFolderPaths', () => {
 
   it('rejects a malformed path with a 400 naming it, BEFORE opening a transaction', async () => {
     const { svc, outer } = harness();
-    const call = svc.ensureFolderPaths({ clientId: 'c1', paths: ['ok', 'Case/../x'] }, USER);
+    const call = svc.ensureFolderPaths({ clientId: 'c1', paths: ['ok', 'Case/../x'] }, USER, DEPT);
     await expect(call).rejects.toThrow(BadRequestException);
     await expect(call).rejects.toThrow('".." is not a valid folder name. (folder "Case/../x")');
     expect(outer.$transaction).not.toHaveBeenCalled();
@@ -123,7 +128,7 @@ describe('DatabankService.ensureFolderPaths', () => {
   it('shortens a very long offending path in the message', async () => {
     const { svc } = harness();
     const long = `${'a'.repeat(100)}/${'b'.repeat(121)}`;
-    await expect(svc.ensureFolderPaths({ clientId: 'c1', paths: [long] }, USER)).rejects.toThrow(
+    await expect(svc.ensureFolderPaths({ clientId: 'c1', paths: [long] }, USER, DEPT)).rejects.toThrow(
       `(folder "${'a'.repeat(77)}...")`,
     );
   });
@@ -131,7 +136,7 @@ describe('DatabankService.ensureFolderPaths', () => {
   it('checks the drop target UNDER the lock and 400s when it is not a live folder of this scope', async () => {
     const { svc, prisma, log } = harness();
     await expect(
-      svc.ensureFolderPaths({ clientId: 'c1', parentFolderId: 'gone', paths: ['A'] }, USER),
+      svc.ensureFolderPaths({ clientId: 'c1', parentFolderId: 'gone', paths: ['A'] }, USER, DEPT),
     ).rejects.toThrow('Target folder does not exist in this databank');
     expect(log.slice(0, 3)).toEqual(['txn:{"timeout":30000}', 'lock', 'folder.findFirst']);
     expect(prisma.databankFolder.findFirst.mock.calls[0][0].where).toMatchObject({
@@ -147,7 +152,7 @@ describe('DatabankService.ensureFolderPaths', () => {
     const { svc, prisma } = harness();
     // 1,250 top-level folders each holding one child → 2,500 new folders.
     const paths = Array.from({ length: 1250 }, (_, i) => `f${i}/child`);
-    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths }, USER);
+    const out = await svc.ensureFolderPaths({ clientId: 'c1', paths }, USER, DEPT);
 
     const chunks = prisma.databankFolder.createMany.mock.calls.map((c: any[]) => c[0].data);
     expect(chunks.map((c: unknown[]) => c.length)).toEqual([1000, 1000, 500]);
@@ -167,7 +172,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), { id: 'parent' })) // parent live
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), { id: 'clash' })) // "Scans" taken
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), null)); // "Scans (2)" free
-    const out = await svc.createFolder('c1', { name: ' Scans ', parentFolderId: 'parent' }, USER);
+    const out = await svc.createFolder('c1', { name: ' Scans ', parentFolderId: 'parent' }, USER, DEPT);
     expect(log[0]).toBe('txn:{"timeout":30000}');
     expect(log[1]).toBe('lock');
     expect(lockKey(prisma)).toBe('databank-folders|client|c1');
@@ -176,6 +181,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
       ownerUserId: null,
       parentFolderId: 'parent',
       name: 'Scans (2)',
+      department: DEPT,
       createdByUserId: 'u1',
     });
     expect(out.name).toBe('Scans (2)');

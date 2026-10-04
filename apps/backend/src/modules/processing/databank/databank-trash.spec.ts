@@ -1,6 +1,10 @@
 import { NotFoundException } from '@nestjs/common';
+import { DatabankDepartment } from '@prisma/client';
 import { DatabankService } from './databank.service';
 import { DatabankTrashSweeperService } from './databank-trash-sweeper.service';
+
+/** This spec drives the service as the PROCESSING portal would. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * Databank P3 — trash (list / restore / permanent purge) + the retention
@@ -141,7 +145,7 @@ describe('DatabankService — move/copy serialize vs a concurrent trash', () => 
     (storage as any).copyObject = jest.fn(async () => ({ key: 'copykey', sizeBytes: 10 }));
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'X' }]); // destination live + share-locked
 
-    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER);
+    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER, DEPT);
 
     expect(tx.databankFile.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ folderId: 'X', storageKey: 'copykey' }) }),
@@ -157,7 +161,7 @@ describe('DatabankService — move/copy serialize vs a concurrent trash', () => 
     (storage as any).copyObject = jest.fn(async () => ({ key: 'copykey', sizeBytes: 10 }));
     tx.$queryRaw.mockResolvedValueOnce([]); // destination trashed/gone under the lock
 
-    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER);
+    await svc.copyFile('S1', { targetFolderId: 'X' } as never, USER, DEPT);
 
     expect(tx.databankFile.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ folderId: null, storageKey: 'copykey' }) }),

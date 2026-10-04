@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DatabankDepartment,
   DatabankFileSource,
   DatabankUploadStatus,
   DatabankUploadStrategy,
@@ -217,6 +218,7 @@ export class DatabankUploadService {
   async init(
     dto: InitUploadsDto,
     user: RequestUser,
+    department: DatabankDepartment,
     targetUserId?: string,
   ): Promise<{ mode: 'proxy' } | { mode: 'direct'; maxBytes: number; results: InitResult[] }> {
     const scope: Scope = await this.databank.resolveWriteScope(dto, user, targetUserId);
@@ -507,7 +509,7 @@ export class DatabankUploadService {
             if (rival) losers.push({ x, rival });
             else winners.push(x);
           }
-          if (winners.length) await tx.databankUpload.createMany({ data: winners.map((x) => this.sessionRow(x, user, scope, sessionExpiresAt)) });
+          if (winners.length) await tx.databankUpload.createMany({ data: winners.map((x) => this.sessionRow(x, user, scope, sessionExpiresAt, department)) });
           return { winners, losers };
         }, INIT_TXN);
         won = outcome.winners;
@@ -575,6 +577,7 @@ export class DatabankUploadService {
     fileId: string,
     dto: InitVersionDto,
     user: RequestUser,
+    department: DatabankDepartment,
     // Kept for route symmetry with the other upload endpoints. A version's scope
     // is the TARGET FILE's own (client/owner), resolved below, so it is unused.
     _targetUserId?: string,
@@ -710,6 +713,7 @@ export class DatabankUploadService {
             r2UploadId,
             partSize: plan.strategy === 'MULTIPART' ? plan.partSize : null,
             partCount: plan.strategy === 'MULTIPART' ? plan.partCount : null,
+            department,
             expiresAt: sessionExpiresAt,
           },
         });
@@ -768,12 +772,15 @@ export class DatabankUploadService {
     });
   }
 
-  /** One new session row (the insert's shape, shared by init). */
+  /** One new session row (the insert's shape, shared by init). The `department`
+   *  is the CALLING PORTAL's constant, carried on the session so the DatabankFile
+   *  created at finalize inherits it (never read from the request). */
   private sessionRow(
     x: { c: { folderId: string | null; f: InitUploadFileDto; plan: UploadPlan; mimeType: string }; id: string; storageKey: string; r2UploadId: string | null },
     user: RequestUser,
     scope: Scope,
     expiresAt: Date,
+    department: DatabankDepartment,
   ): Prisma.DatabankUploadCreateManyInput {
     return {
       id: x.id,
@@ -792,6 +799,7 @@ export class DatabankUploadService {
       r2UploadId: x.r2UploadId,
       partSize: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partSize : null,
       partCount: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partCount : null,
+      department,
       expiresAt,
     };
   }
@@ -1189,6 +1197,9 @@ export class DatabankUploadService {
             mimeType: s.mimeType,
             fileSizeBytes: s.sizeBytes,
             sha256: s.sha256,
+            // The completed file inherits the SESSION's department (stamped from
+            // the calling portal at init) — never re-derived here.
+            department: s.department,
             uploadSessionId: s.id,
             source: DatabankFileSource.UPLOAD,
             uploadedByUserId: s.createdByUserId,

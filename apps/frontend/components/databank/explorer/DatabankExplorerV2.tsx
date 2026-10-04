@@ -24,7 +24,14 @@ import {
   Search,
   X,
   FileText,
-  Image as ImageIcon,
+  FileType,
+  FileSpreadsheet,
+  Presentation,
+  FileImage,
+  FileVideo,
+  FileAudio,
+  FileArchive,
+  FileCode,
   File as FileIcon,
   FolderInput,
   FolderPlus,
@@ -57,6 +64,7 @@ import { dataScopeOf } from '@/lib/databank-upload/keys';
 import { settlePaste, type PasteJob } from '@/lib/databank-explorer/settle-paste';
 import { canPasteInto } from '@/lib/databank-explorer/paste-target';
 import { previewKind } from '@/lib/databank-explorer/preview-kind';
+import { fileKind, fileTypeLabel } from '@/lib/databank-explorer/file-kind';
 import { DocxView, XlsxView } from '@/components/databank/explorer/OfficePreview';
 import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
 import type { UploadDest } from '@/lib/databank-upload-browser';
@@ -87,22 +95,39 @@ const accent = 'var(--sos-accent, #b8860b)';
 const accentSoft = 'var(--sos-accent-soft, rgba(184,134,11,0.10))';
 const danger = 'var(--sos-danger, #dc2626)';
 
-function FileGlyph({ mime, size = 20 }: { mime: string | null; size?: number }) {
-  if (mime && /pdf/i.test(mime)) return <FileText size={size} />;
-  if (mime && /^image\//i.test(mime)) return <ImageIcon size={size} />;
-  return <FileIcon size={size} />;
+/** A distinct, colour-coded icon per file type (PDF, Word, Excel, image, …) so
+ *  the grid reads at a glance — like Drive/Finder — instead of one grey glyph.
+ *  Colours are deliberately the format's conventional hue, not theme tokens. */
+function FileGlyph({ mime, name, size = 20 }: { mime: string | null; name?: string | null; size?: number }) {
+  switch (fileKind(mime, name)) {
+    case 'pdf':
+      return <FileText size={size} color="#dc2626" />;
+    case 'word':
+      return <FileType size={size} color="#2563eb" />;
+    case 'excel':
+      return <FileSpreadsheet size={size} color="#16a34a" />;
+    case 'powerpoint':
+      return <Presentation size={size} color="#ea580c" />;
+    case 'image':
+      return <FileImage size={size} color="#0891b2" />;
+    case 'video':
+      return <FileVideo size={size} color="#7c3aed" />;
+    case 'audio':
+      return <FileAudio size={size} color="#db2777" />;
+    case 'archive':
+      return <FileArchive size={size} color="#b45309" />;
+    case 'code':
+      return <FileCode size={size} color="#475569" />;
+    case 'text':
+      return <FileText size={size} color="#64748b" />;
+    default:
+      return <FileIcon size={size} color="#64748b" />;
+  }
 }
 
-/** Short label for the Type column, derived from the mime type. */
-function typeLabel(mime: string | null): string {
-  if (!mime) return 'File';
-  if (/pdf/i.test(mime)) return 'PDF';
-  if (/^image\//i.test(mime)) return 'Image';
-  if (/^video\//i.test(mime)) return 'Video';
-  if (/^audio\//i.test(mime)) return 'Audio';
-  if (/word|excel|powerpoint|officedocument|msword|ms-excel|ms-powerpoint|opendocument|spreadsheet|presentation|text\/|rtf|csv/i.test(mime))
-    return 'Doc';
-  return 'File';
+/** Short label for the Type column, derived from the mime type + filename. */
+function typeLabel(mime: string | null, name?: string | null): string {
+  return fileTypeLabel(mime, name);
 }
 
 /** Short "12 Aug 2026"-style date for the Modified column. */
@@ -817,7 +842,7 @@ export function DatabankExplorerV2({
     if (!readOnly) cols.push({ id: 'select', enableSorting: false });
     cols.push({ id: 'name', header: 'Name', accessorFn: (r) => r.fileName, sortingFn: 'text' });
     cols.push({ id: 'size', header: 'Size', accessorFn: (r) => r.fileSizeBytes ?? -1 });
-    cols.push({ id: 'type', header: 'Type', accessorFn: (r) => typeLabel(r.mimeType), sortingFn: 'text' });
+    cols.push({ id: 'type', header: 'Type', accessorFn: (r) => typeLabel(r.mimeType, r.fileName), sortingFn: 'text' });
     cols.push({ id: 'modified', header: 'Modified', accessorFn: (r) => Date.parse(r.updatedAt) || 0 });
     return cols;
   }, [readOnly]);
@@ -867,6 +892,8 @@ export function DatabankExplorerV2({
   // Folder Move…/Delete go through the (generalized) dialogs, like files.
   const [folderMove, setFolderMove] = useState<{ id: string; name: string } | null>(null);
   const [folderDelete, setFolderDelete] = useState<{ id: string; name: string } | null>(null);
+  // Rename a folder from a MAIN-pane folder row (the left tree renames inline).
+  const [folderRename, setFolderRename] = useState<{ id: string; name: string } | null>(null);
   // Live in-app preview (image / pdf / video / audio / text) — Google-Drive-style.
   const [preview, setPreview] = useState<{ file: ApiDatabankFile; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -1607,43 +1634,10 @@ export function DatabankExplorerV2({
               alignItems: 'stretch',
             }}
           >
-            {/* Table (folder view AND search results — one component, two data sources). */}
+            {/* Table (folder view AND search results — one component, two data sources).
+                Subfolders of the open folder appear as rows at the TOP of this same
+                table (not a separate section), like any file explorer. */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* Subfolders of the open folder — click to open (hidden while searching). */}
-              {!isSearching && currentSubfolders.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase', color: muted }}>
-                    Folders
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {currentSubfolders.map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setSelectedFolderId(f.id)}
-                        title={`Open ${f.name}`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 7,
-                          maxWidth: 220,
-                          border,
-                          borderRadius: 10,
-                          background: surfaceSolid,
-                          color: primary,
-                          fontSize: 13,
-                          fontWeight: 500,
-                          padding: '7px 12px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Folder size={15} style={{ color: accent, flexShrink: 0 }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
               <ContextMenu.Root>
                 <ContextMenu.Trigger asChild>
               <div
@@ -1665,13 +1659,9 @@ export function DatabankExplorerV2({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
                     <Loader2 size={14} className="animate-spin" /> {isSearching ? 'Searching…' : 'Loading databank…'}
                   </div>
-                ) : rows.length === 0 ? (
+                ) : rows.length === 0 && (isSearching || currentSubfolders.length === 0) ? (
                   <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
-                    {isSearching
-                      ? 'No files match your search.'
-                      : currentSubfolders.length > 0
-                        ? 'No files here — open a subfolder above.'
-                        : 'This folder is empty.'}
+                    {isSearching ? 'No files match your search.' : 'This folder is empty.'}
                   </div>
                 ) : (
                   <div style={{ minWidth: tableMinWidth }}>
@@ -1736,6 +1726,114 @@ export function DatabankExplorerV2({
                       })}
                     </div>
 
+                    {/* Subfolder rows — shown at the top of the SAME table (not a
+                        separate section), click to open; hidden while searching. */}
+                    {!isSearching
+                      ? currentSubfolders.map((f) => (
+                          <ContextMenu.Root key={`folder-${f.id}`}>
+                            <ContextMenu.Trigger asChild>
+                              <div
+                                onClick={() => setSelectedFolderId(f.id)}
+                                onDoubleClick={() => setSelectedFolderId(f.id)}
+                                onContextMenu={(e) => e.stopPropagation()}
+                                title={`Open ${f.name}`}
+                                style={{
+                                  height: ROW_H,
+                                  display: 'grid',
+                                  gridTemplateColumns: gridCols,
+                                  alignItems: 'center',
+                                  gap: 10,
+                                  padding: '0 12px',
+                                  cursor: 'pointer',
+                                  background: 'transparent',
+                                  borderBottom: border,
+                                  minWidth: 0,
+                                }}
+                              >
+                                {!readOnly ? <div /> : null}
+                                {/* Name */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                  <span style={{ flexShrink: 0, display: 'inline-flex' }}>
+                                    <Folder size={20} color={accent} />
+                                  </span>
+                                  <div
+                                    style={{ fontSize: 13.5, color: primary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    title={f.name}
+                                  >
+                                    {f.name}
+                                  </div>
+                                </div>
+                                {/* Size */}
+                                <div style={{ fontSize: 12.5, color: muted, textAlign: 'right', whiteSpace: 'nowrap' }}>—</div>
+                                {/* Type */}
+                                <div style={{ fontSize: 12.5, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Folder</div>
+                                {/* Modified */}
+                                <div style={{ fontSize: 12.5, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmtDate(f.updatedAt)}</div>
+                              </div>
+                            </ContextMenu.Trigger>
+                            {!readOnly ? (
+                              <ContextMenu.Portal>
+                                <ContextMenu.Content className="dbx-menu" collisionPadding={8}>
+                                  <ContextMenu.Item className="dbx-item" onSelect={() => setSelectedFolderId(f.id)}>
+                                    <Folder size={15} /> Open
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Separator className="dbx-sep" />
+                                  <ContextMenu.Item
+                                    className="dbx-item"
+                                    onSelect={() => setClipboard({ op: 'copy', files: [], folder: { id: f.id, name: f.name } })}
+                                  >
+                                    <Copy size={15} /> Copy
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Item
+                                    className="dbx-item"
+                                    onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: f.id, name: f.name } })}
+                                  >
+                                    <Scissors size={15} /> Cut
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(f.id)} onSelect={() => void doPaste(f.id)}>
+                                    <ClipboardPaste size={15} /> Paste here
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Item
+                                    className="dbx-item"
+                                    onSelect={() => {
+                                      setSelectedFolderId(f.id);
+                                      fileInputRef.current?.click();
+                                    }}
+                                  >
+                                    <Upload size={15} /> Upload files here…
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
+                                  <ContextMenu.Separator className="dbx-sep" />
+                                  <ContextMenu.Item
+                                    className="dbx-item"
+                                    onSelect={() => {
+                                      setSelectedFolderId(f.id);
+                                      setNewFolderOpen(true);
+                                    }}
+                                  >
+                                    <FolderPlus size={15} /> New subfolder…
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Item className="dbx-item" onSelect={() => setFolderRename({ id: f.id, name: f.name })}>
+                                    <Pencil size={15} /> Rename…
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: f.id, name: f.name })}>
+                                    <FolderInput size={15} /> Move to…
+                                  </ContextMenu.Item>
+                                  <ContextMenu.Separator className="dbx-sep" />
+                                  <ContextMenu.Item
+                                    className="dbx-item"
+                                    data-danger=""
+                                    onSelect={() => setFolderDelete({ id: f.id, name: f.name })}
+                                  >
+                                    <Trash2 size={15} /> Delete
+                                  </ContextMenu.Item>
+                                </ContextMenu.Content>
+                              </ContextMenu.Portal>
+                            ) : null}
+                          </ContextMenu.Root>
+                        ))
+                      : null}
+
                     {/* Virtualized rows */}
                     <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
                       {rowVirtualizer.getVirtualItems().map((vi) => {
@@ -1787,8 +1885,8 @@ export function DatabankExplorerV2({
 
                                 {/* Name */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                  <span style={{ color: muted, flexShrink: 0, display: 'inline-flex' }}>
-                                    <FileGlyph mime={file.mimeType} />
+                                  <span style={{ flexShrink: 0, display: 'inline-flex' }}>
+                                    <FileGlyph mime={file.mimeType} name={file.fileName} />
                                   </span>
                                   <div style={{ minWidth: 0, flex: 1 }}>
                                     <div
@@ -1815,7 +1913,7 @@ export function DatabankExplorerV2({
 
                                 {/* Type */}
                                 <div style={{ fontSize: 12.5, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {typeLabel(file.mimeType)}
+                                  {typeLabel(file.mimeType, file.fileName)}
                                 </div>
 
                                 {/* Modified */}
@@ -1975,6 +2073,16 @@ export function DatabankExplorerV2({
       {renameTarget ? (
         <RenameDialog file={renameTarget} onClose={() => setRenameTarget(null)} onSubmit={doRename} />
       ) : null}
+      {folderRename ? (
+        <FolderRenameDialog
+          folder={folderRename}
+          onClose={() => setFolderRename(null)}
+          onSubmit={async (id, name) => {
+            await api.renameFolder(id, name);
+            setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)));
+          }}
+        />
+      ) : null}
       {moveTargets ? (
         <MoveDialog
           noun={moveTargets.length === 1 ? `“${moveTargets[0].fileName}”` : `${moveTargets.length} files`}
@@ -2108,7 +2216,7 @@ function DetailsPanel({
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 8px', borderBottom: border }}>
         <span style={{ color: accent, flexShrink: 0, display: 'inline-flex', marginTop: 2 }}>
-          <FileGlyph mime={file.mimeType} size={22} />
+          <FileGlyph mime={file.mimeType} name={file.fileName} size={22} />
         </span>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 13.5, fontWeight: 600, color: primary, wordBreak: 'break-word' }} title={file.fileName}>
@@ -2133,7 +2241,7 @@ function DetailsPanel({
           <dt style={{ color: muted }}>Size</dt>
           <dd style={{ margin: 0, color: primary }}>{file.fileSizeBytes == null ? '—' : fmtSize(file.fileSizeBytes)}</dd>
           <dt style={{ color: muted }}>Type</dt>
-          <dd style={{ margin: 0, color: primary }}>{typeLabel(file.mimeType)}</dd>
+          <dd style={{ margin: 0, color: primary }}>{typeLabel(file.mimeType, file.fileName)}</dd>
           <dt style={{ color: muted }}>Modified</dt>
           <dd style={{ margin: 0, color: primary }}>{fmtDate(file.updatedAt) || '—'}</dd>
         </dl>
@@ -2511,6 +2619,64 @@ function RenameDialog({
   );
 }
 
+function FolderRenameDialog({
+  folder,
+  onClose,
+  onSubmit,
+}: {
+  folder: { id: string; name: string };
+  onClose: () => void;
+  onSubmit: (id: string, name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(folder.name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const value = name.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(folder.id, value);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Rename failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell
+      title="Rename folder"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => void submit()} disabled={busy || !name.trim()} style={{ ...primaryBtn, opacity: busy || !name.trim() ? 0.6 : 1 }}>
+            {busy ? 'Saving…' : 'Rename'}
+          </button>
+        </>
+      }
+    >
+      <input
+        autoFocus
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+        }}
+        aria-label="Folder name"
+        style={{ width: '100%', border, borderRadius: 8, padding: '9px 10px', fontSize: 13.5, color: primary, background: surfaceSolid, outline: 'none' }}
+      />
+      {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
+    </DialogShell>
+  );
+}
+
 function MoveDialog({
   noun,
   options,
@@ -2749,7 +2915,7 @@ function TrashDialog({
           {items.map((item) => (
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border, borderRadius: 10, padding: '8px 10px' }}>
               <span style={{ color: item.kind === 'folder' ? accent : muted, flexShrink: 0, display: 'inline-flex' }}>
-                {item.kind === 'folder' ? <Folder size={18} /> : <FileGlyph mime={null} size={18} />}
+                {item.kind === 'folder' ? <Folder size={18} /> : <FileGlyph mime={null} name={item.name} size={18} />}
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 13, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>

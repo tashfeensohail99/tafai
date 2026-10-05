@@ -25,6 +25,9 @@ import {
   type DatabankFileSource,
   type DatabankSearchParams,
   type DatabankSearchResult,
+  type DatabankShareAccess,
+  type DatabankShareRow,
+  type DatabankSharesResult,
   type DatabankUploadTarget,
   type PresignedUploadResponse,
   type TrashItem,
@@ -473,6 +476,32 @@ export function makeDatabankClient(base: DatabankBasePath) {
     });
   }
 
+  // ---- Sharing to JR (Processing/JR separation, Step 5) ----
+  function shareToJr(
+    clientId: string,
+    opts: { folderId?: string | null; accessLevel?: DatabankShareAccess; note?: string } = {},
+  ): Promise<DatabankShareRow> {
+    return apiFetch<DatabankShareRow>(`${base}/clients/${clientId}/shares`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+      cache: 'no-store',
+    });
+  }
+
+  function unshareFromJr(shareId: string): Promise<{ id: string; revoked: true }> {
+    return apiFetch(`${base}/shares/${shareId}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  function listShares(clientId: string): Promise<DatabankSharesResult> {
+    return apiFetch<DatabankSharesResult>(`${base}/clients/${clientId}/shares`, {
+      cache: 'no-store',
+    });
+  }
+
   return {
     fetchByAssociate,
     fetchTree,
@@ -504,5 +533,8 @@ export function makeDatabankClient(base: DatabankBasePath) {
     restoreFileVersion,
     renameFileVersion,
     deleteFileVersion,
+    shareToJr,
+    unshareFromJr,
+    listShares,
   };
 }

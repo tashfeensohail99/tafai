@@ -11,6 +11,9 @@ import type {
   DatabankFileSource,
   DatabankSearchParams,
   DatabankSearchResult,
+  DatabankShareAccess,
+  DatabankShareRow,
+  DatabankSharesResult,
   DatabankUploadTarget,
   TrashItem,
   Version,
@@ -118,6 +121,18 @@ export interface DatabankApi {
   renameFileVersion(fileId: string, versionId: string, name: string, ifMatch?: string): Promise<{ etag: string; versions: Version[] }>;
   /** PERMANENTLY delete a NON-current version (409 if it is the current one). */
   deleteFileVersion(fileId: string, versionId: string, ifMatch?: string): Promise<{ id: string; deleted: true }>;
+
+  // ---- Sharing to JR (Processing/JR separation, Step 5) ----
+  // A Processing manager shares a client (or one Processing folder) to JR,
+  // revokes a share, or lists the active shares. The manager permission is the
+  // real backend gate; both portals expose the routes so the shared UI works
+  // against either base.
+  /** Share the whole client (no opts/folderId) or ONE Processing folder to JR. */
+  shareToJr(clientId: string, opts?: { folderId?: string | null; accessLevel?: DatabankShareAccess; note?: string }): Promise<DatabankShareRow>;
+  /** Revoke an active share by id. */
+  unshareFromJr(shareId: string): Promise<{ id: string; revoked: true }>;
+  /** The active shares exposing this client's Processing databank to JR. */
+  listShares(clientId: string): Promise<DatabankSharesResult>;
 }
 
 const rpcProcessing = makeDatabankClient('/processing/databank');

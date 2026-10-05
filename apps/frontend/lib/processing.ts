@@ -2105,6 +2105,31 @@ export interface ApiDatabankTree {
    *  the upload / new-folder / rename / move / delete controls. Optional for
    *  backward compatibility; treated as writable when absent. */
   canWrite?: boolean;
+  /** True only in the Processing portal for a manager with separation ON — the
+   *  signal that the shared UI should show the Share-to-JR control. Optional /
+   *  absent = not shareable (separation OFF, the JR portal, or a non-manager). */
+  canShareToJr?: boolean;
+}
+
+/** Processing/JR databank share access level (Step 5). */
+export type DatabankShareAccess = 'READ' | 'WRITE';
+
+/** One ACTIVE share exposing a client's Processing databank to JR. `folderId`
+ *  null = the whole client (`folderName` then null too); a folder share carries
+ *  its resolved live folder name (null if the folder is gone). */
+export interface DatabankShareRow {
+  id: string;
+  folderId: string | null;
+  folderName: string | null;
+  accessLevel: DatabankShareAccess;
+  grantedByUserId: string;
+  createdAt: string;
+}
+
+/** The active shares for one client (GET {base}/clients/:clientId/shares). */
+export interface DatabankSharesResult {
+  clientShared: boolean;
+  shares: DatabankShareRow[];
 }
 
 export interface ApiDatabankClientRow {

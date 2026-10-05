@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -354,4 +355,32 @@ export class TrashQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   personal?: boolean;
+}
+
+/**
+ * POST {base}/clients/:clientId/shares — a Processing MANAGER shares a client's
+ * Processing databank to JR (Processing/JR separation, Step 5). `folderId` NULL
+ * (or omitted) shares the WHOLE client; a UUID shares ONE Processing folder (its
+ * subtree). `forbidNonWhitelisted` is on, so every accepted field is declared
+ * here — a stray field 400s the request. The `@ValidateIf(o.folderId !== null)`
+ * guard lets an explicit `null` through (whole-client) while still requiring a
+ * real UUID when a value is present.
+ */
+export class ShareToJrDto {
+  /** The Processing folder to share (its subtree); omit or null = the whole client. */
+  @IsOptional()
+  @ValidateIf((o) => o.folderId !== null)
+  @IsUUID()
+  folderId?: string | null;
+
+  /** Share access; defaults to READ when omitted. */
+  @IsOptional()
+  @IsIn(['READ', 'WRITE'])
+  accessLevel?: 'READ' | 'WRITE';
+
+  /** Optional "why shared / escalated" context. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  note?: string;
 }

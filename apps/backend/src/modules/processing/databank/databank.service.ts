@@ -478,6 +478,13 @@ export class DatabankService {
   async getTree(clientId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     await this.assertClientReadAccess(clientId, user);
     const canWrite = await this.canWriteClient(clientId, user);
+    // Whether the shared UI shows the Share-to-JR control: ON only in the
+    // Processing portal for a manager (the only role that may grant a share).
+    // Naturally false when separation is OFF and in the JR portal.
+    const canShareToJr =
+      this.separationEnabled() &&
+      viewerDept === DatabankDepartment.PROCESSING &&
+      this.canViewAll(user);
 
     const folderSelect = {
       id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true,
@@ -504,7 +511,7 @@ export class DatabankService {
       ]);
       // canWrite tells the UI whether to show the edit controls: false = the
       // viewer may read/download but not modify (client assigned to another officer).
-      return { clientId, folders, files, canWrite };
+      return { clientId, folders, files, canWrite, canShareToJr };
     }
 
     // FLAG ON, PROCESSING portal — only this department's own rows (never JR's).
@@ -521,7 +528,7 @@ export class DatabankService {
           select: fileSelect,
         }),
       ]);
-      return { clientId, folders, files, canWrite };
+      return { clientId, folders, files, canWrite, canShareToJr };
     }
 
     // FLAG ON, JR portal — JR's OWN rows (writable per canWrite) UNION the
@@ -588,7 +595,145 @@ export class DatabankService {
     }
 
     // canWrite reflects JR's OWN scope; shared-in rows are always readOnly above.
-    return { clientId, folders, files, canWrite };
+    return { clientId, folders, files, canWrite, canShareToJr };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sharing (Processing → JR) — Step 5
+  // ---------------------------------------------------------------------------
+  // A Processing MANAGER (processing.case.view_all) grants, revokes and lists
+  // the shares that expose a client's Processing databank to JR. The share rows
+  // are the SINGLE source the JR read paths above consult (jrReadableProcessingScope
+  // / jrWriteCovers); this is only the admin surface over them.
+
+  /**
+   * Share a client's Processing databank to JR — the WHOLE client (folderId
+   * omitted/null) or ONE Processing folder (its subtree, via `folderId`). MANAGER
+   * only. Respects the partial-unique "one ACTIVE share per (clientId,
+   * folder-target, toDepartment=JR)": an existing active share for the same target
+   * is UPDATED in place (accessLevel/note), never duplicated. Returns the share row.
+   */
+  async shareToJr(
+    clientId: string,
+    dto: { folderId?: string | null; accessLevel?: DatabankShareAccess; note?: string },
+    user: RequestUser,
+  ) {
+    if (!this.canViewAll(user)) {
+      throw new ForbiddenException('Only a Processing manager can share a client to JR.');
+    }
+    await this.assertClientExists(clientId);
+
+    // You can only share a PROCESSING folder of THIS client. A missing / trashed /
+    // other-client / JR-department folder is a bad request (never a silent no-op).
+    const folderId = dto.folderId ?? null;
+    if (folderId) {
+      const folder = await this.prisma.databankFolder.findFirst({
+        where: { id: folderId, deletedAt: null },
+        select: { id: true, clientId: true, department: true },
+      });
+      if (
+        !folder ||
+        folder.clientId !== clientId ||
+        folder.department !== DatabankDepartment.PROCESSING
+      ) {
+        throw new BadRequestException('You can only share a Processing folder of this client.');
+      }
+    }
+
+    const accessLevel = dto.accessLevel ?? DatabankShareAccess.READ;
+    const note = dto.note ?? null;
+
+    // Upsert against the partial-unique: reuse the active share for this exact
+    // target (clientId + folderId ∪ null + toDepartment JR) if one exists.
+    const existing = await this.prisma.databankShare.findFirst({
+      where: { clientId, folderId, toDepartment: DatabankDepartment.JR, revokedAt: null },
+    });
+    if (existing) {
+      return this.prisma.databankShare.update({
+        where: { id: existing.id },
+        data: { accessLevel, note },
+      });
+    }
+    return this.prisma.databankShare.create({
+      data: {
+        clientId,
+        folderId,
+        fromDepartment: DatabankDepartment.PROCESSING,
+        toDepartment: DatabankDepartment.JR,
+        accessLevel,
+        grantedByUserId: user.id,
+        note,
+      },
+    });
+  }
+
+  /**
+   * Revoke (soft) a share. MANAGER only. 404s a missing OR already-revoked share.
+   * Stamps revokedAt + revokedByUserId so the JR read paths stop honouring it.
+   */
+  async unshareFromJr(shareId: string, user: RequestUser): Promise<{ id: string; revoked: true }> {
+    if (!this.canViewAll(user)) {
+      throw new ForbiddenException('Only a Processing manager can revoke a JR share.');
+    }
+    const share = await this.prisma.databankShare.findFirst({
+      where: { id: shareId, revokedAt: null },
+      select: { id: true },
+    });
+    if (!share) throw new NotFoundException('Share not found');
+    await this.prisma.databankShare.update({
+      where: { id: share.id },
+      data: { revokedAt: new Date(), revokedByUserId: user.id },
+    });
+    return { id: share.id, revoked: true };
+  }
+
+  /**
+   * List the ACTIVE shares exposing a client's Processing databank to JR. Gated by
+   * the same read-access check as the other client reads (any processing officer
+   * may view). `clientShared` is true when a whole-client (folderId NULL) share is
+   * active; each folder share resolves its LIVE folder name (null if the folder is
+   * gone or the share is whole-client).
+   */
+  async listShares(
+    clientId: string,
+    user: RequestUser,
+  ): Promise<{
+    clientShared: boolean;
+    shares: Array<{
+      id: string;
+      folderId: string | null;
+      folderName: string | null;
+      accessLevel: DatabankShareAccess;
+      grantedByUserId: string;
+      createdAt: Date;
+    }>;
+  }> {
+    await this.assertClientReadAccess(clientId, user);
+    const shares = await this.prisma.databankShare.findMany({
+      where: { clientId, toDepartment: DatabankDepartment.JR, revokedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    const folderIds = [
+      ...new Set(shares.map((s) => s.folderId).filter((id): id is string => id !== null)),
+    ];
+    const folders = folderIds.length
+      ? await this.prisma.databankFolder.findMany({
+          where: { id: { in: folderIds }, deletedAt: null },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(folders.map((f) => [f.id, f.name]));
+    return {
+      clientShared: shares.some((s) => s.folderId === null),
+      shares: shares.map((s) => ({
+        id: s.id,
+        folderId: s.folderId,
+        folderName: s.folderId ? nameById.get(s.folderId) ?? null : null,
+        accessLevel: s.accessLevel,
+        grantedByUserId: s.grantedByUserId,
+        createdAt: s.createdAt,
+      })),
+    };
   }
 
   /** The personal "my workspace" tree for one associate — their folders + files

@@ -44,6 +44,7 @@ import {
   RenameFolderDto,
   RenameVersionDto,
   SearchDatabankDto,
+  ShareToJrDto,
   TrashQueryDto,
   UpdateFileDto,
 } from './databank.dto';
@@ -111,6 +112,39 @@ export class JrDatabankController {
   @RequirePermissions(READ)
   getTree(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
     return this.databank.getTree(clientId, user, DEPARTMENT);
+  }
+
+  // ---- Sharing to JR (Processing/JR separation, Step 5) -------------------
+  // These mirror the Processing controller so the SHARED frontend factory works
+  // against either base. Granting/revoking is a PROCESSING MANAGER action, gated
+  // by processing.case.view_all (the service re-checks it), so a plain JR user
+  // hitting the mutating routes gets 403. Listing uses the JR read permission.
+
+  @Post('clients/:clientId/shares')
+  @RequirePermissions('processing.case.view_all')
+  @Audit({ action: 'DATABANK_SHARED_TO_JR', entityType: 'DatabankShare', category: 'MUTATION', severity: 'MEDIUM' })
+  shareToJr(
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Body() dto: ShareToJrDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.shareToJr(clientId, dto, user);
+  }
+
+  @Delete('shares/:shareId')
+  @RequirePermissions('processing.case.view_all')
+  @Audit({ action: 'DATABANK_UNSHARED_FROM_JR', entityType: 'DatabankShare', category: 'MUTATION', severity: 'MEDIUM' })
+  unshareFromJr(
+    @Param('shareId', ParseUUIDPipe) shareId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.unshareFromJr(shareId, user);
+  }
+
+  @Get('clients/:clientId/shares')
+  @RequirePermissions(READ)
+  listShares(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
+    return this.databank.listShares(clientId, user);
   }
 
   /**

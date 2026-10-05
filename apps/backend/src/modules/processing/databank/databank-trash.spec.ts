@@ -113,7 +113,7 @@ describe('DatabankService — move/copy serialize vs a concurrent trash', () => 
     (svc as any).assertFolderInScope = jest.fn(async () => 'X');
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'X' }]); // destination live + now share-locked
 
-    await svc.moveFile('F1', 'X', USER);
+    await svc.moveFile('F1', 'X', USER, DEPT);
 
     // The reparent runs inside the txn, gated by the FOR SHARE probe on the folder.
     expect(order).toContain('txn');
@@ -129,7 +129,7 @@ describe('DatabankService — move/copy serialize vs a concurrent trash', () => 
     (svc as any).assertFolderInScope = jest.fn(async () => 'X');
     tx.$queryRaw.mockResolvedValueOnce([]); // destination trashed/gone under the lock
 
-    await svc.moveFile('F1', 'X', USER);
+    await svc.moveFile('F1', 'X', USER, DEPT);
 
     expect(tx.databankFile.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { folderId: null } }), // never stranded inside the trashed folder
@@ -188,7 +188,7 @@ describe('DatabankService — restore', () => {
       .mockResolvedValueOnce(null); // "Scans (2)" free
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'F2' }, { id: 'F3' }]); // trashed subtree
 
-    const out = await svc.restoreFolder('F2', USER);
+    const out = await svc.restoreFolder('F2', USER, DEPT);
 
     // The lock is the FIRST thing inside the transaction, before any write.
     expect(order.slice(0, 2)).toEqual(['txn', 'lock']);
@@ -216,7 +216,7 @@ describe('DatabankService — restore', () => {
       .mockResolvedValueOnce({ id: 'F1' }) // parent F1 is live
       .mockResolvedValueOnce(null); // name free in F1
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'F2' }]);
-    await svc.restoreFolder('F2', USER);
+    await svc.restoreFolder('F2', USER, DEPT);
     expect(tx.databankFolder.update.mock.calls[0][0].data).toEqual({ parentFolderId: 'F1', name: 'Scans' });
   });
 
@@ -226,7 +226,7 @@ describe('DatabankService — restore', () => {
     prisma.databankFile.findFirst.mockResolvedValueOnce(file); // loadTrashedFile
     tx.databankFolder.findFirst.mockResolvedValueOnce(null); // F2 trashed under the lock → root
 
-    await svc.restoreFile('X1', USER);
+    await svc.restoreFile('X1', USER, DEPT);
 
     // Runs under the per-scope folder lock, inside the transaction.
     expect(order.indexOf('lock')).toBeGreaterThanOrEqual(0);
@@ -243,7 +243,7 @@ describe('DatabankService — restore', () => {
     const file = { id: 'X1', clientId: null, ownerUserId: 'u1', folderId: 'F2', fileName: 'a.pdf', storageKey: 'k' };
     prisma.databankFile.findFirst.mockResolvedValueOnce(file);
     tx.databankFolder.findFirst.mockResolvedValueOnce({ id: 'F2' }); // F2 live
-    await svc.restoreFile('X1', USER);
+    await svc.restoreFile('X1', USER, DEPT);
     expect(tx.databankFile.updateMany).toHaveBeenCalledWith({
       where: { id: 'X1', deletedAt: { not: null } },
       data: { deletedAt: null, folderId: 'F2' },
@@ -254,7 +254,7 @@ describe('DatabankService — restore', () => {
     const { svc, prisma, tx } = svcHarness();
     prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'X1', clientId: null, ownerUserId: 'u1', folderId: null, storageKey: 'k' });
     tx.databankFile.updateMany.mockResolvedValueOnce({ count: 0 }); // raced a purge
-    await expect(svc.restoreFile('X1', USER)).rejects.toThrow(NotFoundException);
+    await expect(svc.restoreFile('X1', USER, DEPT)).rejects.toThrow(NotFoundException);
   });
 });
 
@@ -262,7 +262,7 @@ describe('DatabankService — permanent purge', () => {
   it('purgeFile REJECTS a non-trashed (live) file and never deletes or frees storage', async () => {
     const { svc, prisma, storage } = svcHarness();
     prisma.databankFile.findFirst.mockResolvedValueOnce(null); // a live file is not found by the trashed loader
-    await expect(svc.purgeFile('X1', USER)).rejects.toThrow(NotFoundException);
+    await expect(svc.purgeFile('X1', USER, DEPT)).rejects.toThrow(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(storage.delete).not.toHaveBeenCalled();
   });
@@ -270,7 +270,7 @@ describe('DatabankService — permanent purge', () => {
   it('purgeFolder REJECTS a non-trashed (live) folder and never deletes or frees storage', async () => {
     const { svc, prisma, storage } = svcHarness();
     prisma.databankFolder.findFirst.mockResolvedValueOnce(null);
-    await expect(svc.purgeFolder('F1', USER)).rejects.toThrow(NotFoundException);
+    await expect(svc.purgeFolder('F1', USER, DEPT)).rejects.toThrow(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(storage.delete).not.toHaveBeenCalled();
   });
@@ -280,7 +280,7 @@ describe('DatabankService — permanent purge', () => {
     prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'X1', clientId: null, ownerUserId: 'u1', storageKey: 'kf' });
     tx.databankFile.deleteMany.mockResolvedValueOnce({ count: 1 });
 
-    const out = await svc.purgeFile('X1', USER);
+    const out = await svc.purgeFile('X1', USER, DEPT);
 
     expect(tx.databankFile.deleteMany).toHaveBeenCalledWith({ where: { id: 'X1', deletedAt: { not: null } } });
     // DB delete committed BEFORE storage is freed.
@@ -299,7 +299,7 @@ describe('DatabankService — permanent purge', () => {
       { id: 'B', storageKey: 'k2' },
     ]); // TRASHED files
 
-    const out = await svc.purgeFolder('F1', USER);
+    const out = await svc.purgeFolder('F1', USER, DEPT);
 
     // Files deleted by ID (the trashed ones); folders guarded to trashed only.
     expect(tx.databankFile.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['A', 'B'] } } });
@@ -325,7 +325,7 @@ describe('DatabankService — permanent purge', () => {
     tx.$queryRaw.mockResolvedValueOnce([{ id: 'F1' }]);
     tx.databankFile.findMany.mockResolvedValueOnce([]); // no trashed files under F1
 
-    await svc.purgeFolder('F1', USER);
+    await svc.purgeFolder('F1', USER, DEPT);
 
     // A LIVE file under the trashed folder is relocated to root before the cascade.
     expect(tx.databankFile.updateMany).toHaveBeenCalledWith({
@@ -339,7 +339,7 @@ describe('DatabankService — permanent purge', () => {
     prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'X1', clientId: null, ownerUserId: 'u1', storageKey: 'kf' });
     tx.databankFile.deleteMany.mockResolvedValueOnce({ count: 1 });
     storage.delete.mockRejectedValueOnce(new Error('storage down'));
-    await expect(svc.purgeFile('X1', USER)).resolves.toEqual({ id: 'X1', purged: true });
+    await expect(svc.purgeFile('X1', USER, DEPT)).resolves.toEqual({ id: 'X1', purged: true });
   });
 });
 

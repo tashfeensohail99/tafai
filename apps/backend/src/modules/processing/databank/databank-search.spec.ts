@@ -189,8 +189,9 @@ describe('DatabankService.updateFile — rename + metadata', () => {
       'f1',
       { fileName: 'passport.pdf', description: '  a scan  ', tags: [' visa ', 'visa', '', 'urgent'] },
       USER,
+      DatabankDepartment.PROCESSING,
     );
-    expect(s.loadFile).toHaveBeenCalledWith('f1', USER);
+    expect(s.loadFile).toHaveBeenCalledWith('f1', USER, DatabankDepartment.PROCESSING);
     const data = prisma.databankFile.update.mock.calls[0][0].data;
     expect(data.fileName).toBe('passport.pdf');
     expect(data.description).toBe('a scan');
@@ -204,13 +205,13 @@ describe('DatabankService.updateFile — rename + metadata', () => {
   it('caps tags at 50', async () => {
     const { svc, prisma } = updHarness();
     const tags = Array.from({ length: 80 }, (_, i) => `t${i}`);
-    await svc.updateFile('f1', { tags }, USER);
+    await svc.updateFile('f1', { tags }, USER, DatabankDepartment.PROCESSING);
     expect(prisma.databankFile.update.mock.calls[0][0].data.tags).toHaveLength(50);
   });
 
   it('clears the description on an explicit null and leaves other columns untouched', async () => {
     const { svc, prisma } = updHarness();
-    await svc.updateFile('f1', { description: null }, USER);
+    await svc.updateFile('f1', { description: null }, USER, DatabankDepartment.PROCESSING);
     const data = prisma.databankFile.update.mock.calls[0][0].data;
     expect(data.description).toBeNull();
     expect(data).not.toHaveProperty('fileName');
@@ -219,13 +220,13 @@ describe('DatabankService.updateFile — rename + metadata', () => {
 
   it('a fileName-only body is a plain rename (previous behaviour unchanged)', async () => {
     const { svc, prisma } = updHarness();
-    await svc.updateFile('f1', { fileName: ' renamed.pdf ' }, USER);
+    await svc.updateFile('f1', { fileName: ' renamed.pdf ' }, USER, DatabankDepartment.PROCESSING);
     expect(prisma.databankFile.update.mock.calls[0][0].data).toEqual({ fileName: 'renamed.pdf' });
   });
 
   it('rejects a rename to a blocked executable extension', async () => {
     const { svc } = updHarness();
-    await expect(svc.updateFile('f1', { fileName: 'scan.exe' }, USER)).rejects.toBeInstanceOf(
+    await expect(svc.updateFile('f1', { fileName: 'scan.exe' }, USER, DatabankDepartment.PROCESSING)).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });

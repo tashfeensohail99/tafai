@@ -83,6 +83,6 @@ describe('JrDatabankController search + updateFile parity', () => {
 
     void ctrl.updateFile('file-1', dto, USER);
 
-    expect(databank.updateFile).toHaveBeenCalledWith('file-1', dto, USER);
+    expect(databank.updateFile).toHaveBeenCalledWith('file-1', dto, USER, DatabankDepartment.JR);
   });
 });

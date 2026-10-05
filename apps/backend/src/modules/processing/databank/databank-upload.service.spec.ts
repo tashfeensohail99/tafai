@@ -887,7 +887,7 @@ describe('DatabankUploadService.initVersion (resumable new-version, P3 PR-2)', (
     process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
     try {
       expect(await h.svc.initVersion('F1', vdto() as never, USER, DEPT)).toEqual({ mode: 'proxy' });
-      expect(h.databank.loadFileForVersionWrite).toHaveBeenCalledWith('F1', USER);
+      expect(h.databank.loadFileForVersionWrite).toHaveBeenCalledWith('F1', USER, DEPT);
       expect(h.storage.createMultipartUpload).not.toHaveBeenCalled();
     } finally {
       delete process.env.DATABANK_RESUMABLE_UPLOADS;

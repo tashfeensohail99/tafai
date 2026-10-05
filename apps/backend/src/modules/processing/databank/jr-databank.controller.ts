@@ -250,7 +250,7 @@ export class JrDatabankController {
     @Body() dto: RenameFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.renameFolder(folderId, dto.name, user);
+    return this.databank.renameFolder(folderId, dto.name, user, DEPARTMENT);
   }
 
   @Patch('folders/:folderId/move')
@@ -260,7 +260,7 @@ export class JrDatabankController {
     @Body() dto: MoveFolderDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.moveFolder(folderId, dto.parentFolderId, user);
+    return this.databank.moveFolder(folderId, dto.parentFolderId, user, DEPARTMENT);
   }
 
   @Delete('folders/:folderId')
@@ -270,7 +270,7 @@ export class JrDatabankController {
     @Param('folderId', ParseUUIDPipe) folderId: string,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.deleteFolder(folderId, user);
+    return this.databank.deleteFolder(folderId, user, DEPARTMENT);
   }
 
   // ---- Files --------------------------------------------------------------
@@ -297,7 +297,7 @@ export class JrDatabankController {
   @RequirePermissions(READ)
   @AuditDocumentAccess('DatabankFile', 'fileId')
   getSignedUrl(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.getSignedUrl(fileId, user);
+    return this.databank.getSignedUrl(fileId, user, DEPARTMENT);
   }
 
   /** Rename AND/OR set metadata (description, tags). A `fileName`-only body is a
@@ -309,7 +309,7 @@ export class JrDatabankController {
     @Body() dto: UpdateFileDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.updateFile(fileId, dto, user);
+    return this.databank.updateFile(fileId, dto, user, DEPARTMENT);
   }
 
   @Patch('files/:fileId/move')
@@ -319,7 +319,7 @@ export class JrDatabankController {
     @Body() dto: MoveFileDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.moveFile(fileId, dto.folderId, user);
+    return this.databank.moveFile(fileId, dto.folderId, user, DEPARTMENT);
   }
 
   @Post('files/:fileId/copy')
@@ -347,7 +347,7 @@ export class JrDatabankController {
   @RequirePermissions(WRITE)
   @Audit({ action: 'DATABANK_FILE_DELETED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
   deleteFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.deleteFile(fileId, user);
+    return this.databank.deleteFile(fileId, user, DEPARTMENT);
   }
 
   // ---- File versions (Databank P3-2) --------------------------------------
@@ -364,7 +364,7 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const out = await this.databank.listVersions(fileId, user);
+    const out = await this.databank.listVersions(fileId, user, DEPARTMENT);
     res.setHeader('ETag', out.etag);
     return out;
   }
@@ -377,7 +377,7 @@ export class JrDatabankController {
     @Param('versionId', ParseUUIDPipe) versionId: string,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.getVersionSignedUrl(fileId, versionId, user);
+    return this.databank.getVersionSignedUrl(fileId, versionId, user, DEPARTMENT);
   }
 
   @Post('files/:fileId/versions/presign')
@@ -387,7 +387,7 @@ export class JrDatabankController {
     @Body() dto: PresignVersionDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.presignNewVersion(fileId, dto, user);
+    return this.databank.presignNewVersion(fileId, dto, user, DEPARTMENT);
   }
 
   /** Resumable (> 2 GB) new-version upload init (P3 PR-2): records a session
@@ -412,7 +412,7 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
     @Headers('if-match') ifMatch?: string,
   ) {
-    return this.databank.commitNewVersion(fileId, dto, user, ifMatch);
+    return this.databank.commitNewVersion(fileId, dto, user, DEPARTMENT, ifMatch);
   }
 
   @Post('files/:fileId/versions/:versionId/restore')
@@ -424,7 +424,7 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
     @Headers('if-match') ifMatch?: string,
   ) {
-    return this.databank.restoreVersion(fileId, versionId, user, ifMatch);
+    return this.databank.restoreVersion(fileId, versionId, user, DEPARTMENT, ifMatch);
   }
 
   @Patch('files/:fileId/versions/:versionId')
@@ -436,7 +436,7 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
     @Headers('if-match') ifMatch?: string,
   ) {
-    return this.databank.renameVersion(fileId, versionId, dto.name, user, ifMatch);
+    return this.databank.renameVersion(fileId, versionId, dto.name, user, DEPARTMENT, ifMatch);
   }
 
   @Delete('files/:fileId/versions/:versionId')
@@ -448,7 +448,7 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
     @Headers('if-match') ifMatch?: string,
   ) {
-    return this.databank.deleteVersion(fileId, versionId, user, ifMatch);
+    return this.databank.deleteVersion(fileId, versionId, user, DEPARTMENT, ifMatch);
   }
 
   // ---- Trash (soft-delete recovery + permanent purge, Databank P3) ---------
@@ -466,27 +466,27 @@ export class JrDatabankController {
   @RequirePermissions(WRITE)
   @Audit({ action: 'DATABANK_FOLDER_RESTORED', entityType: 'DatabankFolder', category: 'MUTATION', severity: 'MEDIUM' })
   restoreFolder(@Param('folderId', ParseUUIDPipe) folderId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.restoreFolder(folderId, user);
+    return this.databank.restoreFolder(folderId, user, DEPARTMENT);
   }
 
   @Post('files/:fileId/restore')
   @RequirePermissions(WRITE)
   @Audit({ action: 'DATABANK_FILE_RESTORED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'MEDIUM' })
   restoreFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.restoreFile(fileId, user);
+    return this.databank.restoreFile(fileId, user, DEPARTMENT);
   }
 
   @Delete('folders/:folderId/purge')
   @RequirePermissions(WRITE)
   @Audit({ action: 'DATABANK_FOLDER_PURGED', entityType: 'DatabankFolder', category: 'MUTATION', severity: 'HIGH' })
   purgeFolder(@Param('folderId', ParseUUIDPipe) folderId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.purgeFolder(folderId, user);
+    return this.databank.purgeFolder(folderId, user, DEPARTMENT);
   }
 
   @Delete('files/:fileId/purge')
   @RequirePermissions(WRITE)
   @Audit({ action: 'DATABANK_FILE_PURGED', entityType: 'DatabankFile', category: 'MUTATION', severity: 'HIGH' })
   purgeFile(@Param('fileId', ParseUUIDPipe) fileId: string, @CurrentUser() user: RequestUser) {
-    return this.databank.purgeFile(fileId, user);
+    return this.databank.purgeFile(fileId, user, DEPARTMENT);
   }
 }

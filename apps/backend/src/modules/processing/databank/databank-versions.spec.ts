@@ -3,8 +3,13 @@ import {
   ConflictException,
   PreconditionFailedException,
 } from '@nestjs/common';
+import { DatabankDepartment } from '@prisma/client';
 import { DatabankService, DatabankTargetFileGoneError } from './databank.service';
 import { DatabankTrashSweeperService } from './databank-trash-sweeper.service';
+
+/** The calling portal's department. loadFile / loadFileForRead are stubbed here,
+ *  so the value is only threaded through — the version logic is department-blind. */
+const DEPT = DatabankDepartment.PROCESSING;
 
 /**
  * Databank P3-2 — file versioning (service layer). Prisma and StorageService are
@@ -111,7 +116,7 @@ function harness(file = CLIENT_FILE) {
 describe('DatabankService — commitNewVersion', () => {
   it('materialises v1 from the mirror THEN appends v2, repoints current + mirror (frees nothing)', async () => {
     const { svc, tx, storage } = harness();
-    await svc.commitNewVersion('F1', COMMIT_DTO as never, USER);
+    await svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT);
 
     expect(tx.databankFileVersion.create).toHaveBeenCalledTimes(2);
     const v1 = tx.databankFileVersion.create.mock.calls[0][0].data;
@@ -133,7 +138,7 @@ describe('DatabankService — commitNewVersion', () => {
   it('a version-aware idempotent retry (key already a version of THIS file) returns the file, no HEAD/txn', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'F1' });
-    const out = await svc.commitNewVersion('F1', COMMIT_DTO as never, USER);
+    const out = await svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT);
     expect(out.id).toBe('F1');
     expect(storage.headObjectMeta).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -142,11 +147,11 @@ describe('DatabankService — commitNewVersion', () => {
   it('400s a key owned by ANOTHER file’s version, or by any DatabankFile', async () => {
     const a = harness();
     a.prisma.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'OTHER' });
-    await expect(a.svc.commitNewVersion('F1', COMMIT_DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(a.svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT)).rejects.toBeInstanceOf(BadRequestException);
 
     const b = harness();
     b.prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'X' }); // some file already owns the key
-    await expect(b.svc.commitNewVersion('F1', COMMIT_DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(b.svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('a CONCURRENT same-key commit that adopted the key while we waited for the lock is a no-op (never deletes the now-live object)', async () => {
@@ -156,7 +161,7 @@ describe('DatabankService — commitNewVersion', () => {
     // (the key is now the live current object). Regression for the TOCTOU HIGH.
     const { svc, tx, storage } = harness();
     tx.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'F1' }); // adopted by A
-    const out = await svc.commitNewVersion('F1', COMMIT_DTO as never, USER);
+    const out = await svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT);
     expect(out.id).toBe('F1');
     expect(storage.delete).not.toHaveBeenCalled(); // the live object is never freed
     expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
@@ -166,14 +171,14 @@ describe('DatabankService — commitNewVersion', () => {
   it('a CONCURRENT commit that adopted the key for ANOTHER file is a 400 — and still deletes nothing', async () => {
     const { svc, tx, storage } = harness();
     tx.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'OTHER' });
-    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT)).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.delete).not.toHaveBeenCalled();
     expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
   });
 
   it('sha256 == CURRENT is a no-op: deletes the redundant object, creates no version, returns the file', async () => {
     const { svc, tx, storage } = harness();
-    const out = await svc.commitNewVersion('F1', { ...COMMIT_DTO, sha256: 'oldhash' } as never, USER);
+    const out = await svc.commitNewVersion('F1', { ...COMMIT_DTO, sha256: 'oldhash' } as never, USER, DEPT);
     expect(storage.delete).toHaveBeenCalledWith(NEW_KEY);
     expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
     expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
@@ -182,7 +187,7 @@ describe('DatabankService — commitNewVersion', () => {
 
   it('If-Match mismatch → 412 and FREES the just-uploaded object', async () => {
     const { svc, storage } = harness(); // versionSeq 1
-    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, '5')).rejects.toBeInstanceOf(
+    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT, '5')).rejects.toBeInstanceOf(
       PreconditionFailedException,
     );
     expect(storage.delete).toHaveBeenCalledWith(NEW_KEY);
@@ -197,7 +202,7 @@ describe('DatabankService — commitNewVersion', () => {
     tx.databankFileVersion.findUnique
       .mockResolvedValueOnce(null) // top adopted check: not yet adopted when we read
       .mockResolvedValueOnce({ id: 'vY' }); // inside deleteOwnUpload: file Y just adopted K
-    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, '5')).rejects.toBeInstanceOf(
+    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER, DEPT, '5')).rejects.toBeInstanceOf(
       PreconditionFailedException,
     );
     expect(storage.delete).not.toHaveBeenCalled(); // Y's live current bytes preserved
@@ -270,7 +275,7 @@ describe('DatabankService — restoreVersion (repoint only)', () => {
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({
       id: 'vOld', storageKey: 'kold', mimeType: 'application/pdf', fileSizeBytes: BigInt(5), sha256: 'h5',
     });
-    await svc.restoreVersion('F1', 'vOld', USER);
+    await svc.restoreVersion('F1', 'vOld', USER, DEPT);
     expect(tx.databankFile.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'F1', versionSeq: 3 },
@@ -283,14 +288,14 @@ describe('DatabankService — restoreVersion (repoint only)', () => {
   it('is an idempotent no-op when the version is already current', async () => {
     const { svc, tx } = harness(MAT);
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vCur', storageKey: 'kcur' });
-    await svc.restoreVersion('F1', 'vCur', USER);
+    await svc.restoreVersion('F1', 'vCur', USER, DEPT);
     expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
   });
 
   it('If-Match mismatch → 412', async () => {
     const { svc, tx } = harness(MAT);
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
-    await expect(svc.restoreVersion('F1', 'vOld', USER, '5')).rejects.toBeInstanceOf(PreconditionFailedException);
+    await expect(svc.restoreVersion('F1', 'vOld', USER, DEPT, '5')).rejects.toBeInstanceOf(PreconditionFailedException);
   });
 });
 
@@ -300,7 +305,7 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
   it('REFUSES the current version (409) and frees nothing', async () => {
     const { svc, tx, storage } = harness(MAT);
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vCur', storageKey: 'kcur' });
-    await expect(svc.deleteVersion('F1', 'vCur', USER)).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.deleteVersion('F1', 'vCur', USER, DEPT)).rejects.toBeInstanceOf(ConflictException);
     expect(tx.databankFileVersion.deleteMany).not.toHaveBeenCalled();
     expect(storage.delete).not.toHaveBeenCalled();
   });
@@ -308,7 +313,7 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
   it('deletes a NON-current version THEN frees its sole-referenced key, in that order', async () => {
     const { svc, tx, storage, order } = harness(MAT);
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
-    const out = await svc.deleteVersion('F1', 'vOld', USER);
+    const out = await svc.deleteVersion('F1', 'vOld', USER, DEPT);
     expect(tx.databankFileVersion.deleteMany).toHaveBeenCalledWith({ where: { id: 'vOld', fileId: 'F1' } });
     expect(order.indexOf('tx.version.deleteMany')).toBeLessThan(order.indexOf('storage.delete:kold'));
     expect(storage.delete).toHaveBeenCalledWith('kold');
@@ -317,7 +322,7 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
 
   it('If-Match mismatch → 412', async () => {
     const { svc } = harness(MAT);
-    await expect(svc.deleteVersion('F1', 'vOld', USER, '5')).rejects.toBeInstanceOf(PreconditionFailedException);
+    await expect(svc.deleteVersion('F1', 'vOld', USER, DEPT, '5')).rejects.toBeInstanceOf(PreconditionFailedException);
   });
 
   it('does NOT free the key if a concurrent commit re-adopted it between the delete-commit and the free', async () => {
@@ -326,7 +331,7 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
     const { svc, tx, prisma, storage } = harness(MAT);
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
     prisma.databankFileVersion.findUnique.mockResolvedValueOnce({ id: 'vReadopted' }); // kold is referenced again
-    await svc.deleteVersion('F1', 'vOld', USER);
+    await svc.deleteVersion('F1', 'vOld', USER, DEPT);
     expect(storage.delete).not.toHaveBeenCalled();
   });
 
@@ -335,7 +340,7 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
     tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
     prisma.databankFileVersion.findUnique.mockResolvedValueOnce(null); // no version row…
     prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'Freadopt' }); // …but a file mirror now points at it
-    await svc.deleteVersion('F1', 'vOld', USER);
+    await svc.deleteVersion('F1', 'vOld', USER, DEPT);
     expect(storage.delete).not.toHaveBeenCalled();
   });
 });
@@ -343,14 +348,14 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
 describe('DatabankService — renameVersion', () => {
   it('If-Match mismatch → 412', async () => {
     const { svc } = harness({ ...CLIENT_FILE, versionSeq: 3 });
-    await expect(svc.renameVersion('F1', 'vOld', 'Signed final', USER, '5')).rejects.toBeInstanceOf(
+    await expect(svc.renameVersion('F1', 'vOld', 'Signed final', USER, DEPT, '5')).rejects.toBeInstanceOf(
       PreconditionFailedException,
     );
   });
 
   it('sets the label and bumps versionSeq', async () => {
     const { svc, tx } = harness({ ...CLIENT_FILE, currentVersionId: 'v2', versionSeq: 3 });
-    await svc.renameVersion('F1', 'vOld', '  Signed final  ', USER);
+    await svc.renameVersion('F1', 'vOld', '  Signed final  ', USER, DEPT);
     expect(tx.databankFileVersion.updateMany).toHaveBeenCalledWith({
       where: { id: 'vOld', fileId: 'F1' },
       data: { name: 'Signed final' },
@@ -366,7 +371,7 @@ describe('DatabankService — listVersions', () => {
   it('implicit-v1 state returns a single SYNTHETIC current entry (id:null) from the mirror', async () => {
     const { svc, prisma } = harness(); // currentVersionId null, versionSeq 1
     prisma.databankFileVersion.findMany.mockResolvedValueOnce([]);
-    const out = await svc.listVersions('F1', USER);
+    const out = await svc.listVersions('F1', USER, DEPT);
     expect(out.etag).toBe('W/"1"');
     expect(out.versions).toHaveLength(1);
     expect(out.versions[0]).toMatchObject({
@@ -385,7 +390,7 @@ describe('DatabankService — listVersions', () => {
       { id: 'v2', versionNumber: 2, name: null, fileSizeBytes: BigInt(20), mimeType: 'application/pdf', sha256: 'newhash', createdByUserId: 'u1', createdAt: new Date() },
       { id: 'v1', versionNumber: 1, name: null, fileSizeBytes: BigInt(10), mimeType: 'application/pdf', sha256: 'oldhash', createdByUserId: 'u0', createdAt: new Date() },
     ]);
-    const out = await svc.listVersions('F1', USER);
+    const out = await svc.listVersions('F1', USER, DEPT);
     expect(out.etag).toBe('W/"2"');
     expect((out.versions.find((v: any) => v.id === 'v2') as any).isCurrent).toBe(true);
     expect((out.versions.find((v: any) => v.id === 'v1') as any).isCurrent).toBe(false);
@@ -434,7 +439,7 @@ describe('DatabankService — purge frees the deduped version union', () => {
     // v1 = 'k1'; v2 = 'k2' is the CURRENT object → also the file mirror key.
     tx.databankFileVersion.findMany.mockResolvedValueOnce([{ storageKey: 'k1' }, { storageKey: 'k2' }]);
 
-    const out = await svc.purgeFile('F1', USER);
+    const out = await svc.purgeFile('F1', USER, DEPT);
 
     expect(order.indexOf('tx.version.findMany')).toBeLessThan(order.indexOf('tx.file.deleteMany'));
     // k2 appears in the mirror AND its version row → freed EXACTLY once (no double-free).
@@ -458,7 +463,7 @@ describe('DatabankService — purge frees the deduped version union', () => {
       { storageKey: 'kB' },
     ]);
 
-    const out = await svc.purgeFolder('FD', USER);
+    const out = await svc.purgeFolder('FD', USER, DEPT);
 
     expect(order.indexOf('tx.version.findMany')).toBeLessThan(order.indexOf('tx.file.deleteMany'));
     expect(storage.delete.mock.calls).toEqual([['kA'], ['kB'], ['kA1']]); // deduped, kA once

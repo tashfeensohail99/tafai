@@ -189,7 +189,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
 
   it('renameFolder: re-reads the folder under the lock — deleted since the auth check → 404, no write', async () => {
     const { svc, prisma, log } = harness();
-    await expect(svc.renameFolder('f1', 'New', USER)).rejects.toThrow(NotFoundException);
+    await expect(svc.renameFolder('f1', 'New', USER, DEPT)).rejects.toThrow(NotFoundException);
     expect(log).toEqual(['txn:{"timeout":30000}', 'lock', 'folder.findFirst']);
     expect(prisma.databankFolder.update).not.toHaveBeenCalled();
   });
@@ -200,7 +200,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), LIVE)) // reload
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), { id: 'dest' })) // target live
       .mockImplementationOnce(async () => (log.push('folder.findFirst'), null)); // name free
-    await svc.moveFolder('f1', 'dest', USER);
+    await svc.moveFolder('f1', 'dest', USER, DEPT);
     expect(log).toEqual([
       'txn:{"timeout":30000}',
       'lock',
@@ -217,7 +217,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
     const { svc, prisma } = harness();
     prisma.databankFolder.findFirst.mockResolvedValueOnce(LIVE).mockResolvedValueOnce({ id: 'kid' });
     prisma.$queryRaw.mockResolvedValue([{ id: 'f1' }]);
-    await expect(svc.moveFolder('f1', 'kid', USER)).rejects.toThrow('its own subtree');
+    await expect(svc.moveFolder('f1', 'kid', USER, DEPT)).rejects.toThrow('its own subtree');
     expect(prisma.databankFolder.update).not.toHaveBeenCalled();
   });
 
@@ -225,7 +225,7 @@ describe('the per-scope folder lock on hand-made folder writes', () => {
     const { svc, prisma, log } = harness();
     prisma.databankFolder.findFirst.mockImplementationOnce(async () => (log.push('folder.findFirst'), LIVE));
     prisma.$queryRaw.mockImplementation(async () => (log.push('queryRaw'), [{ id: 'f1' }, { id: 'f2' }]));
-    const out = await svc.deleteFolder('f1', USER);
+    const out = await svc.deleteFolder('f1', USER, DEPT);
     expect(log).toEqual([
       'txn:{"timeout":30000}',
       'lock',

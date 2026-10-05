@@ -589,7 +589,9 @@ export class DatabankUploadService {
     // falls back to the small direct version upload (commitNewVersion) or the proxy.
     if (!this.storage.supportsDirectUpload) return { mode: 'proxy' };
     // Authorise a WRITE on the file's OWN scope (404s a missing/trashed file).
-    const file = await this.databank.loadFileForVersionWrite(fileId, user);
+    // The department is the CALLING PORTAL's constant (threaded for per-item
+    // Processing/JR separation), never the request.
+    const file = await this.databank.loadFileForVersionWrite(fileId, user, department);
     this.databank.assertSafeFileName(dto.fileName);
     if (exceedsUploadCap(dto.sizeBytes, this.maxBytes)) {
       return direct({ index: 0, status: 'rejected', reason: `Larger than the ${Math.round(this.maxBytes / GiB)} GB per-file upload limit.` });

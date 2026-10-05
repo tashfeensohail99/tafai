@@ -7,7 +7,7 @@ import {
   NotFoundException,
   PreconditionFailedException,
 } from '@nestjs/common';
-import { DatabankDepartment, DatabankFileSource, Prisma } from '@prisma/client';
+import { DatabankDepartment, DatabankFileSource, DatabankShareAccess, Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -209,18 +209,114 @@ export class DatabankService {
    *  personal item (ownerUserId). This resolves the row's scope to the right
    *  authorization. 'read' vs 'write' only differs for CLIENT rows (client read
    *  is team-wide, client write is manager/assigned-officer); PERSONAL rows are
-   *  owner-or-manager for both. */
+   *  owner-or-manager for both.
+   *
+   *  PER-ITEM Processing/JR separation (Step 4b), gated behind the same OFF-by-
+   *  default flag. `viewerDept` is the CALLING PORTAL's constant (never the
+   *  request). `kind` lets the share-coverage test pick the right id — a FILE is
+   *  covered by its folderId, a FOLDER by its own id.
+   *    - PERSONAL rows: department-agnostic, exactly as before.
+   *    - CLIENT rows, flag OFF: byte-identical to pre-separation (department-blind).
+   *    - CLIENT rows, flag ON:
+   *        · same department as the viewer → today's within-department behaviour;
+   *        · JR viewer, Processing row → readable/writable ONLY through an active
+   *          share (see {@link jrReadableProcessingScope} / {@link jrWriteCovers}).
+   *          Not shared in → NotFound (hide existence, never a 403). Shared in →
+   *          read allowed; write allowed only when a covering share grants WRITE
+   *          (v1 shares default READ → effectively read-only), else Forbidden;
+   *        · Processing viewer, JR row → NotFound (Processing never reaches JR). */
   private async authorizeRow(
-    row: { clientId: string | null; ownerUserId: string | null },
+    row: {
+      clientId: string | null;
+      ownerUserId: string | null;
+      department?: DatabankDepartment;
+      folderId?: string | null;
+      id?: string;
+    },
     user: RequestUser,
     mode: 'read' | 'write',
+    viewerDept: DatabankDepartment,
+    kind: 'file' | 'folder',
   ): Promise<void> {
     if (row.clientId) {
-      if (mode === 'write') return this.assertClientWriteAccess(row.clientId, user);
-      return this.assertClientReadAccess(row.clientId, user);
+      // Flag OFF — byte-identical to pre-separation: department-blind, no shares.
+      if (!this.separationEnabled()) {
+        if (mode === 'write') return this.assertClientWriteAccess(row.clientId, user);
+        return this.assertClientReadAccess(row.clientId, user);
+      }
+      // Flag ON, within the viewer's OWN department — today's within-department rule.
+      if (row.department === viewerDept) {
+        if (mode === 'write') return this.assertClientWriteAccess(row.clientId, user);
+        return this.assertClientReadAccess(row.clientId, user);
+      }
+      // Flag ON, JR reaching a PROCESSING row — allowed only through an active share.
+      if (viewerDept === DatabankDepartment.JR && row.department === DatabankDepartment.PROCESSING) {
+        const scope = await this.jrReadableProcessingScope(row.clientId);
+        if (!this.rowCoveredByScope(scope, kind, row)) {
+          // Not shared in → hide its existence; never a 403 that would confirm it.
+          throw new NotFoundException(kind === 'file' ? 'File not found' : 'Folder not found');
+        }
+        if (mode === 'read') return; // a shared-in Processing row is readable by JR
+        // WRITE only when a COVERING share grants WRITE (v1 shares default READ).
+        if (!(await this.jrWriteCovers(row.clientId, kind, row))) {
+          throw new ForbiddenException('This Processing document is shared to JR as read-only.');
+        }
+        return;
+      }
+      // Flag ON, PROCESSING reaching a JR row (or any other cross-department pair)
+      // — never reachable; hide the row's existence.
+      throw new NotFoundException(kind === 'file' ? 'File not found' : 'Folder not found');
     }
     if (row.ownerUserId) return this.assertPersonalAccess(row.ownerUserId, user);
     throw new NotFoundException('Databank item is not attached to a client or an owner.');
+  }
+
+  /** Whether a Processing row falls inside a JR READ-share scope (the output of
+   *  {@link jrReadableProcessingScope}): 'ALL' always covers, 'NONE' never; a
+   *  folder-id set covers a FILE by its folderId and a FOLDER by its own id. */
+  private rowCoveredByScope(
+    scope: 'NONE' | 'ALL' | { folderIds: string[] },
+    kind: 'file' | 'folder',
+    row: { id?: string; folderId?: string | null },
+  ): boolean {
+    if (scope === 'ALL') return true;
+    if (scope === 'NONE') return false;
+    const testId = kind === 'file' ? row.folderId ?? null : row.id ?? null;
+    return testId !== null && scope.folderIds.includes(testId);
+  }
+
+  /** Whether an ACTIVE share to JR with accessLevel WRITE covers this Processing
+   *  row — the gate for a JR WRITE on a shared-in Processing item. Mirrors
+   *  {@link jrReadableProcessingScope}'s coverage but over WRITE shares only: a
+   *  whole-client WRITE share covers everything; a folder WRITE share covers its
+   *  subtree (folder + descendants, expanded via the shared {@link collectSubtree}).
+   *  v1 shares default READ, so this is normally false and a shared-in Processing
+   *  row stays read-only to JR. A FILE is tested by its folderId, a FOLDER by its
+   *  own id (same rule as {@link rowCoveredByScope}). */
+  private async jrWriteCovers(
+    clientId: string,
+    kind: 'file' | 'folder',
+    row: { id?: string; folderId?: string | null },
+  ): Promise<boolean> {
+    const shares = await this.prisma.databankShare.findMany({
+      where: {
+        clientId,
+        toDepartment: DatabankDepartment.JR,
+        revokedAt: null,
+        accessLevel: DatabankShareAccess.WRITE,
+      },
+    });
+    if (shares.length === 0) return false;
+    if (shares.some((s) => s.folderId === null)) return true; // whole-client WRITE share
+    const testId = kind === 'file' ? row.folderId ?? null : row.id ?? null;
+    if (testId === null) return false;
+    for (const s of shares) {
+      if (!s.folderId) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const ids = await this.collectSubtree(s.folderId);
+      if (ids.includes(testId)) return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -228,22 +324,22 @@ export class DatabankService {
   // ---------------------------------------------------------------------------
 
   /** Load a folder for a WRITE operation (rename / move / delete). */
-  private async loadFolder(folderId: string, user: RequestUser) {
+  private async loadFolder(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const folder = await this.prisma.databankFolder.findFirst({
       where: { id: folderId, deletedAt: null },
     });
     if (!folder) throw new NotFoundException('Folder not found');
-    await this.authorizeRow(folder, user, 'write');
+    await this.authorizeRow(folder, user, 'write', viewerDept, 'folder');
     return folder;
   }
 
   /** Load a file for a WRITE operation (rename / move / delete). */
-  private async loadFile(fileId: string, user: RequestUser) {
+  private async loadFile(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const file = await this.prisma.databankFile.findFirst({
       where: { id: fileId, deletedAt: null },
     });
     if (!file) throw new NotFoundException('File not found');
-    await this.authorizeRow(file, user, 'write');
+    await this.authorizeRow(file, user, 'write', viewerDept, 'file');
     return file;
   }
 
@@ -255,19 +351,20 @@ export class DatabankService {
   async loadFileForVersionWrite(
     fileId: string,
     user: RequestUser,
+    viewerDept: DatabankDepartment,
   ): Promise<{ id: string; clientId: string | null; ownerUserId: string | null; folderId: string | null }> {
-    const file = await this.loadFile(fileId, user);
+    const file = await this.loadFile(fileId, user, viewerDept);
     return { id: file.id, clientId: file.clientId, ownerUserId: file.ownerUserId, folderId: file.folderId };
   }
 
   /** Load a file for a READ operation (download / copy-from). Client files are
    *  readable team-wide; personal files only by the owner or a manager. */
-  private async loadFileForRead(fileId: string, user: RequestUser) {
+  private async loadFileForRead(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const file = await this.prisma.databankFile.findFirst({
       where: { id: fileId, deletedAt: null },
     });
     if (!file) throw new NotFoundException('File not found');
-    await this.authorizeRow(file, user, 'read');
+    await this.authorizeRow(file, user, 'read', viewerDept, 'file');
     return file;
   }
 
@@ -275,12 +372,12 @@ export class DatabankService {
    *  client, like loadFileForRead) — used by copyFolder so a folder copy is
    *  gated exactly like a file copy: READ the source, WRITE the destination.
    *  NOT loadFolder, which is WRITE-gated and would make folder-copy stricter. */
-  private async loadFolderForRead(folderId: string, user: RequestUser) {
+  private async loadFolderForRead(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const folder = await this.prisma.databankFolder.findFirst({
       where: { id: folderId, deletedAt: null },
     });
     if (!folder) throw new NotFoundException('Folder not found');
-    await this.authorizeRow(folder, user, 'read');
+    await this.authorizeRow(folder, user, 'read', viewerDept, 'folder');
     return folder;
   }
 
@@ -1252,8 +1349,8 @@ export class DatabankService {
     }, FOLDER_TXN);
   }
 
-  async renameFolder(folderId: string, name: string, user: RequestUser) {
-    const authorized = await this.loadFolder(folderId, user);
+  async renameFolder(folderId: string, name: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const authorized = await this.loadFolder(folderId, user, viewerDept);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
     return this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -1267,8 +1364,13 @@ export class DatabankService {
     }, FOLDER_TXN);
   }
 
-  async moveFolder(folderId: string, parentFolderId: string | null | undefined, user: RequestUser) {
-    const authorized = await this.loadFolder(folderId, user);
+  async moveFolder(
+    folderId: string,
+    parentFolderId: string | null | undefined,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+  ) {
+    const authorized = await this.loadFolder(folderId, user, viewerDept);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
     return this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -1287,8 +1389,8 @@ export class DatabankService {
 
   /** Soft-delete a folder and its ENTIRE subtree (descendant folders + all
    *  their files). Recoverable — nothing is removed from storage. */
-  async deleteFolder(folderId: string, user: RequestUser) {
-    const authorized = await this.loadFolder(folderId, user);
+  async deleteFolder(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const authorized = await this.loadFolder(folderId, user, viewerDept);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
     return this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -1707,18 +1809,18 @@ export class DatabankService {
   /** A fresh, short-lived signed URL for viewing/downloading a file. Access is
    *  authorized here; the audit trail is written by the DocumentAccessAudit
    *  interceptor via @AuditDocumentAccess on the route. */
-  async getSignedUrl(fileId: string, user: RequestUser) {
-    const file = await this.loadFileForRead(fileId, user);
+  async getSignedUrl(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadFileForRead(fileId, user, viewerDept);
     const url = await this.storage.getSignedUrl(file.storageKey);
     return { url, fileName: file.fileName, mimeType: file.mimeType };
   }
 
-  async renameFile(fileId: string, fileName: string, user: RequestUser) {
+  async renameFile(fileId: string, fileName: string, user: RequestUser, viewerDept: DatabankDepartment) {
     // Same extension rule as upload — otherwise "scan.pdf" could be renamed to
     // "scan.exe" and slip past BLOCKED_EXT. Check the EXACT value we store.
     const name = fileName.trim();
     this.assertSafeFileName(name);
-    const file = await this.loadFile(fileId, user);
+    const file = await this.loadFile(fileId, user, viewerDept);
     return this.prisma.databankFile.update({
       where: { id: file.id },
       data: { fileName: name },
@@ -1735,8 +1837,8 @@ export class DatabankService {
    * may modify it. Returns fileSelect + description/tags so the UI reflects the
    * new metadata without a re-fetch.
    */
-  async updateFile(fileId: string, dto: UpdateFileDto, user: RequestUser) {
-    const file = await this.loadFile(fileId, user);
+  async updateFile(fileId: string, dto: UpdateFileDto, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadFile(fileId, user, viewerDept);
     const data: Prisma.DatabankFileUpdateInput = {};
     if (dto.fileName !== undefined) {
       // Same extension rule as rename/upload — check the EXACT value we store.
@@ -1771,8 +1873,13 @@ export class DatabankService {
     return out;
   }
 
-  async moveFile(fileId: string, folderId: string | null | undefined, user: RequestUser) {
-    const file = await this.loadFile(fileId, user);
+  async moveFile(
+    fileId: string,
+    folderId: string | null | undefined,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+  ) {
+    const file = await this.loadFile(fileId, user, viewerDept);
     const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
     const targetFolder = await this.assertFolderInScope(folderId, scope);
     return this.prisma.$transaction(async (tx) => {
@@ -1804,7 +1911,10 @@ export class DatabankService {
     user: RequestUser,
     department: DatabankDepartment,
   ) {
-    const source = await this.loadFileForRead(fileId, user);
+    // The SOURCE is READ-gated with the COPYING portal's department as the viewer
+    // (Processing/JR per-item separation): a JR copy can only read a Processing
+    // source it has an active share to; a Processing copy never reads a JR source.
+    const source = await this.loadFileForRead(fileId, user, department);
 
     // Resolve the target scope: an explicit targetClientId wins; otherwise copy
     // within the SOURCE's own scope (client → same client, personal → same owner).
@@ -1915,7 +2025,10 @@ export class DatabankService {
     user: RequestUser,
     department: DatabankDepartment,
   ) {
-    const source = await this.loadFolderForRead(folderId, user);
+    // The SOURCE is READ-gated with the COPYING portal's department as the viewer
+    // (same per-item separation as copyFile): a JR folder-copy can only read a
+    // Processing source it has an active share to.
+    const source = await this.loadFolderForRead(folderId, user, department);
 
     // Resolve the target scope ONCE (explicit client wins; else the source's own
     // scope — client → same client, personal → same owner).
@@ -2084,8 +2197,8 @@ export class DatabankService {
   }
 
   /** Soft-delete a single file (recoverable; the object stays in storage). */
-  async deleteFile(fileId: string, user: RequestUser) {
-    const file = await this.loadFile(fileId, user);
+  async deleteFile(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadFile(fileId, user, viewerDept);
     await this.prisma.databankFile.update({
       where: { id: file.id },
       data: { deletedAt: new Date() },
@@ -2107,23 +2220,23 @@ export class DatabankService {
   /** Load a TRASHED folder (deletedAt != null) for a restore/purge, then
    *  authorize a WRITE on its scope. 404 if missing or still live — a live
    *  folder is never a trash target. */
-  private async loadTrashedFolder(folderId: string, user: RequestUser) {
+  private async loadTrashedFolder(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const folder = await this.prisma.databankFolder.findFirst({
       where: { id: folderId, deletedAt: { not: null } },
     });
     if (!folder) throw new NotFoundException('Folder not found in trash');
-    await this.authorizeRow(folder, user, 'write');
+    await this.authorizeRow(folder, user, 'write', viewerDept, 'folder');
     return folder;
   }
 
   /** Load a TRASHED file (deletedAt != null) for a restore/purge, then authorize
    *  a WRITE on its scope. 404 if missing or still live. */
-  private async loadTrashedFile(fileId: string, user: RequestUser) {
+  private async loadTrashedFile(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
     const file = await this.prisma.databankFile.findFirst({
       where: { id: fileId, deletedAt: { not: null } },
     });
     if (!file) throw new NotFoundException('File not found in trash');
-    await this.authorizeRow(file, user, 'write');
+    await this.authorizeRow(file, user, 'write', viewerDept, 'file');
     return file;
   }
 
@@ -2227,8 +2340,8 @@ export class DatabankService {
    * disambiguated among LIVE siblings in the destination. Runs under the
    * per-scope folder lock so it can't race a concurrent tree change.
    */
-  async restoreFolder(folderId: string, user: RequestUser) {
-    const authorized = await this.loadTrashedFolder(folderId, user);
+  async restoreFolder(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const authorized = await this.loadTrashedFolder(folderId, user, viewerDept);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
     return this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -2275,8 +2388,8 @@ export class DatabankService {
    *  being trashed, and no race with a purge freeing this file's bytes). A
    *  compare-and-set on deletedAt means a file purged since the load is a 404, not
    *  a 500. */
-  async restoreFile(fileId: string, user: RequestUser) {
-    const file = await this.loadTrashedFile(fileId, user);
+  async restoreFile(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadTrashedFile(fileId, user, viewerDept);
     const scope = { clientId: file.clientId, ownerUserId: file.ownerUserId };
     const id = await this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -2305,8 +2418,8 @@ export class DatabankService {
    * commit. A storage failure leaves an orphan (reclaimed by retention) but never
    * rolls back the delete. DB delete FIRST, free storage AFTER.
    */
-  async purgeFile(fileId: string, user: RequestUser) {
-    const file = await this.loadTrashedFile(fileId, user);
+  async purgeFile(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadTrashedFile(fileId, user, viewerDept);
     const versionKeys = await this.prisma.$transaction(async (tx) => {
       // Capture this file's version keys BEFORE the delete: the FK
       // version.fileId → file ON DELETE CASCADE removes the version rows without
@@ -2336,8 +2449,8 @@ export class DatabankService {
    * never touched. Every file row has its OWN unique storageKey, so freeing a
    * purged object can never affect another row.
    */
-  async purgeFolder(folderId: string, user: RequestUser) {
-    const authorized = await this.loadTrashedFolder(folderId, user);
+  async purgeFolder(folderId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const authorized = await this.loadTrashedFolder(folderId, user, viewerDept);
     const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
     const { freeKeys, folderCount, fileCount } = await this.prisma.$transaction(async (tx) => {
       await this.lockFolderScope(tx, scope);
@@ -2467,8 +2580,13 @@ export class DatabankService {
    * Returns the same shape as presignDirectUpload ({ strategy, storageKey, url?,
    * headers?, maxBytes }).
    */
-  async presignNewVersion(fileId: string, dto: PresignVersionDto, user: RequestUser) {
-    const file = await this.loadFile(fileId, user);
+  async presignNewVersion(
+    fileId: string,
+    dto: PresignVersionDto,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+  ) {
+    const file = await this.loadFile(fileId, user, viewerDept);
     const name = dto.fileName ?? file.fileName;
     this.assertSafeFileName(name);
     if (dto.fileSizeBytes > DatabankService.DIRECT_MAX_BYTES) {
@@ -2490,8 +2608,14 @@ export class DatabankService {
    * prior current by its materialised history row). A sha256 match vs the CURRENT
    * version is a no-op (the redundant object is deleted). See the design doc.
    */
-  async commitNewVersion(fileId: string, dto: CommitVersionDto, user: RequestUser, ifMatch?: string) {
-    const file = await this.loadFile(fileId, user);
+  async commitNewVersion(
+    fileId: string,
+    dto: CommitVersionDto,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+    ifMatch?: string,
+  ) {
+    const file = await this.loadFile(fileId, user, viewerDept);
     const scope = this.fileScope(file);
     await this.assertCommittableKey(dto.storageKey, scope);
 
@@ -2821,8 +2945,14 @@ export class DatabankService {
    * columns onto the file (versionSeq+1, guarded → 412). Creates / moves / frees
    * ZERO objects: every version object already exists and stays referenced.
    */
-  async restoreVersion(fileId: string, versionId: string, user: RequestUser, ifMatch?: string) {
-    await this.loadFile(fileId, user);
+  async restoreVersion(
+    fileId: string,
+    versionId: string,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+    ifMatch?: string,
+  ) {
+    await this.loadFile(fileId, user, viewerDept);
     const expectedSeq = this.parseIfMatch(ifMatch);
     await this.prisma.$transaction(async (tx) => {
       await this.lockFileVersions(tx, fileId);
@@ -2867,8 +2997,14 @@ export class DatabankService {
    * was the SOLE reference to that unique key, so no double-free / no freeing a
    * referenced object.
    */
-  async deleteVersion(fileId: string, versionId: string, user: RequestUser, ifMatch?: string) {
-    await this.loadFile(fileId, user);
+  async deleteVersion(
+    fileId: string,
+    versionId: string,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+    ifMatch?: string,
+  ) {
+    await this.loadFile(fileId, user, viewerDept);
     const expectedSeq = this.parseIfMatch(ifMatch);
     const freedKey = await this.prisma.$transaction(async (tx) => {
       await this.lockFileVersions(tx, fileId);
@@ -2908,8 +3044,15 @@ export class DatabankService {
   }
 
   /** Set a version's human label. versionSeq+1; If-Match honoured. */
-  async renameVersion(fileId: string, versionId: string, name: string, user: RequestUser, ifMatch?: string) {
-    await this.loadFile(fileId, user);
+  async renameVersion(
+    fileId: string,
+    versionId: string,
+    name: string,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+    ifMatch?: string,
+  ) {
+    await this.loadFile(fileId, user, viewerDept);
     const label = (name ?? '').trim();
     const expectedSeq = this.parseIfMatch(ifMatch);
     await this.prisma.$transaction(async (tx) => {
@@ -2934,7 +3077,7 @@ export class DatabankService {
         data: { versionSeq: file.versionSeq + 1 },
       });
     }, FOLDER_TXN);
-    return this.listVersions(fileId, user);
+    return this.listVersions(fileId, user, viewerDept);
   }
 
   /**
@@ -2945,8 +3088,8 @@ export class DatabankService {
    * restore nor delete on it (both apply only to non-current, materialised rows);
    * its bytes download via the file's own getSignedUrl.
    */
-  async listVersions(fileId: string, user: RequestUser) {
-    const file = await this.loadFileForRead(fileId, user);
+  async listVersions(fileId: string, user: RequestUser, viewerDept: DatabankDepartment) {
+    const file = await this.loadFileForRead(fileId, user, viewerDept);
     const versions = await this.prisma.databankFileVersion.findMany({
       where: { fileId },
       orderBy: { versionNumber: 'desc' },
@@ -2988,8 +3131,13 @@ export class DatabankService {
 
   /** A fresh signed URL for ONE version's bytes. Read-authorized; the audit trail
    *  is written by @AuditDocumentAccess on the route. */
-  async getVersionSignedUrl(fileId: string, versionId: string, user: RequestUser) {
-    const file = await this.loadFileForRead(fileId, user);
+  async getVersionSignedUrl(
+    fileId: string,
+    versionId: string,
+    user: RequestUser,
+    viewerDept: DatabankDepartment,
+  ) {
+    const file = await this.loadFileForRead(fileId, user, viewerDept);
     const version = await this.prisma.databankFileVersion.findFirst({
       where: { id: versionId, fileId },
       select: { storageKey: true, mimeType: true },

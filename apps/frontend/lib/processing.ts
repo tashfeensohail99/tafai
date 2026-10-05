@@ -2026,6 +2026,13 @@ export interface ApiDatabankFolder {
   parentFolderId: string | null;
   createdAt: string;
   updatedAt: string;
+  // Processing/JR separation (Step 5/6) — set by getTree. On a JR shared-in row:
+  // `shared: true, readOnly: true, department: 'PROCESSING'`. A portal's own rows
+  // carry their `department` and leave shared/readOnly unset. Optional for
+  // backward compatibility.
+  shared?: boolean;
+  readOnly?: boolean;
+  department?: 'PROCESSING' | 'JR';
 }
 
 export interface ApiDatabankFile {
@@ -2044,6 +2051,13 @@ export interface ApiDatabankFile {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  // Processing/JR separation (Step 5/6) — set by getTree. On a JR shared-in row:
+  // `shared: true, readOnly: true, department: 'PROCESSING'`. A portal's own rows
+  // carry their `department` and leave shared/readOnly unset. Optional for
+  // backward compatibility.
+  shared?: boolean;
+  readOnly?: boolean;
+  department?: 'PROCESSING' | 'JR';
 }
 
 /** The six type buckets the search facets are grouped into. */

@@ -44,11 +44,13 @@ import {
   Scissors,
   ClipboardPaste,
   Eye,
+  Share2,
 } from 'lucide-react';
 import type {
   ApiDatabankFolder,
   ApiDatabankFile,
   DatabankSearchFacets,
+  DatabankSharesResult,
   DatabankUploadTarget,
   TrashItem,
   Version,
@@ -56,6 +58,7 @@ import type {
 import { ApiClientError } from '@/lib/api-client';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
+import { buildSharedFolderIndex, type SharedFolderIndex } from '@/lib/databank-explorer/shared-folders';
 // Uploads + new folder (Databank P2, PR-4) — mirrors the legacy DatabankTab.
 import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
 import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
@@ -214,6 +217,15 @@ export function DatabankExplorerV2({
   const [error, setError] = useState<string | null>(null);
   const [canWrite, setCanWrite] = useState(true);
   const readOnly = !canWrite;
+  // Processing/JR separation (Step 6) — true only for a Processing manager with
+  // separation ON; gates every Share-to-JR control. Set from `tree.canShareToJr`.
+  const [canShareToJr, setCanShareToJr] = useState(false);
+  // What's currently shared to JR: whether the whole client is shared, and a
+  // shared-folder-id → share-id map (for folder badges + "Stop sharing").
+  const [sharedIndex, setSharedIndex] = useState<SharedFolderIndex>({
+    clientShared: false,
+    folderShareByFolderId: new Map(),
+  });
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
 
   // ---- Upload / new-folder state (Databank P2, PR-4) ----
@@ -268,6 +280,7 @@ export function DatabankExplorerV2({
       setFolders(tree.folders);
       setFiles(late.length ? mergeLandedFiles(tree.files, late.flatMap((x) => x.files)) : tree.files);
       setCanWrite(tree.canWrite !== false);
+      setCanShareToJr(tree.canShareToJr === true);
       appliedSeq.current = applied;
     };
     try {
@@ -295,6 +308,57 @@ export function DatabankExplorerV2({
     setSelectedFolderId(null);
     void reload();
   }, [reload]);
+
+  // ---- Share to JR (Processing/JR separation, Step 6) ----------------------
+  // Only a Processing manager (canShareToJr) ever lists/mutates shares; both the
+  // badges and the context-menu actions read `sharedIndex`. A failed list is
+  // non-fatal — the badges just stay off.
+  const refreshShares = useCallback(async () => {
+    if (personal || !clientId) return;
+    try {
+      const res = await api.listShares(clientId);
+      setSharedIndex(buildSharedFolderIndex(res));
+    } catch {
+      /* non-fatal: leave the current index in place */
+    }
+  }, [api, personal, clientId]);
+
+  // Fetch the active shares once the tree says this viewer may share (and clear
+  // them when it can't, e.g. scope change to a non-shareable client).
+  useEffect(() => {
+    if (canShareToJr && clientId && !personal) {
+      void refreshShares();
+    } else {
+      setSharedIndex({ clientShared: false, folderShareByFolderId: new Map() });
+    }
+  }, [canShareToJr, clientId, personal, refreshShares]);
+
+  // Share one Processing folder to JR / revoke it, then refresh badges + tree.
+  const shareFolderToJr = useCallback(
+    async (folderId: string) => {
+      if (personal || !clientId) return;
+      try {
+        await api.shareToJr(clientId, { folderId });
+        await refreshShares();
+        await reload();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not share the folder to JR');
+      }
+    },
+    [api, personal, clientId, refreshShares, reload],
+  );
+  const stopSharingFolder = useCallback(
+    async (shareId: string) => {
+      try {
+        await api.unshareFromJr(shareId);
+        await refreshShares();
+        await reload();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not stop sharing with JR');
+      }
+    },
+    [api, refreshShares, reload],
+  );
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
 
@@ -882,6 +946,8 @@ export function DatabankExplorerV2({
   }, [rowHeight, rowVirtualizer]);
 
   // ---- Mutations (context menu + bulk share these) -------------------------
+  // Share-to-JR dialog (manager only).
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<ApiDatabankFile | null>(null);
   const [moveTargets, setMoveTargets] = useState<ApiDatabankFile[] | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<ApiDatabankFile[] | null>(null);
@@ -1105,6 +1171,10 @@ export function DatabankExplorerV2({
   const NodeRow = useCallback(
     ({ node, style, dragHandle }: NodeRendererProps<FolderNode>) => {
       const selected = node.id === selectedFolderId;
+      // Per-row read-only: a JR shared-in Processing folder is never mutable even
+      // in a writable pane. `sharedToJr` = this (Processing) folder's active share.
+      const rowReadOnly = readOnly || folderById.get(node.id)?.readOnly === true;
+      const sharedToJr = sharedIndex.folderShareByFolderId.get(node.id);
       return (
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
@@ -1165,7 +1235,22 @@ export function DatabankExplorerV2({
               {node.data.name}
             </span>
           )}
-          {!readOnly && !node.isEditing ? (
+          {/* Shared-from-Processing (read-only) marker for a JR shared-in folder. */}
+          {rowReadOnly && !node.isEditing ? (
+            <span
+              title="Shared from Processing — read-only"
+              style={{ display: 'inline-flex', flexShrink: 0, color: muted }}
+            >
+              <Share2 size={12} />
+            </span>
+          ) : null}
+          {/* Shared-to-JR marker (Processing manager's own folder). */}
+          {canShareToJr && sharedToJr && !node.isEditing ? (
+            <span title="Shared with JR" style={{ display: 'inline-flex', flexShrink: 0, color: accent }}>
+              <Share2 size={12} />
+            </span>
+          ) : null}
+          {!rowReadOnly && !node.isEditing ? (
             <button
               type="button"
               title="Rename"
@@ -1198,56 +1283,72 @@ export function DatabankExplorerV2({
                 >
                   <Copy size={15} /> Copy
                 </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="dbx-item"
-                  onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: node.id, name: node.data.name } })}
-                >
-                  <Scissors size={15} /> Cut
-                </ContextMenu.Item>
-                <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(node.id)} onSelect={() => void doPaste(node.id)}>
-                  <ClipboardPaste size={15} /> Paste here
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="dbx-item"
-                  onSelect={() => {
-                    setSelectedFolderId(node.id);
-                    fileInputRef.current?.click();
-                  }}
-                >
-                  <Upload size={15} /> Upload files here…
-                </ContextMenu.Item>
-                <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
-                <ContextMenu.Separator className="dbx-sep" />
-                <ContextMenu.Item
-                  className="dbx-item"
-                  onSelect={() => {
-                    setSelectedFolderId(node.id);
-                    setNewFolderOpen(true);
-                  }}
-                >
-                  <FolderPlus size={15} /> New subfolder…
-                </ContextMenu.Item>
-                <ContextMenu.Item className="dbx-item" onSelect={() => node.edit()}>
-                  <Pencil size={15} /> Rename…
-                </ContextMenu.Item>
-                <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: node.id, name: node.data.name })}>
-                  <FolderInput size={15} /> Move to…
-                </ContextMenu.Item>
-                <ContextMenu.Separator className="dbx-sep" />
-                <ContextMenu.Item
-                  className="dbx-item"
-                  data-danger=""
-                  onSelect={() => setFolderDelete({ id: node.id, name: node.data.name })}
-                >
-                  <Trash2 size={15} /> Delete
-                </ContextMenu.Item>
+                {/* Mutating actions suppressed for a JR shared-in (read-only) folder. */}
+                {!rowReadOnly ? (
+                  <>
+                    <ContextMenu.Item
+                      className="dbx-item"
+                      onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: node.id, name: node.data.name } })}
+                    >
+                      <Scissors size={15} /> Cut
+                    </ContextMenu.Item>
+                    <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(node.id)} onSelect={() => void doPaste(node.id)}>
+                      <ClipboardPaste size={15} /> Paste here
+                    </ContextMenu.Item>
+                    <ContextMenu.Item
+                      className="dbx-item"
+                      onSelect={() => {
+                        setSelectedFolderId(node.id);
+                        fileInputRef.current?.click();
+                      }}
+                    >
+                      <Upload size={15} /> Upload files here…
+                    </ContextMenu.Item>
+                    <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
+                    <ContextMenu.Separator className="dbx-sep" />
+                    <ContextMenu.Item
+                      className="dbx-item"
+                      onSelect={() => {
+                        setSelectedFolderId(node.id);
+                        setNewFolderOpen(true);
+                      }}
+                    >
+                      <FolderPlus size={15} /> New subfolder…
+                    </ContextMenu.Item>
+                    <ContextMenu.Item className="dbx-item" onSelect={() => node.edit()}>
+                      <Pencil size={15} /> Rename…
+                    </ContextMenu.Item>
+                    <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: node.id, name: node.data.name })}>
+                      <FolderInput size={15} /> Move to…
+                    </ContextMenu.Item>
+                    {canShareToJr ? (
+                      sharedToJr ? (
+                        <ContextMenu.Item className="dbx-item" onSelect={() => void stopSharingFolder(sharedToJr)}>
+                          <Share2 size={15} /> Stop sharing with JR
+                        </ContextMenu.Item>
+                      ) : (
+                        <ContextMenu.Item className="dbx-item" onSelect={() => void shareFolderToJr(node.id)}>
+                          <Share2 size={15} /> Share folder to JR
+                        </ContextMenu.Item>
+                      )
+                    ) : null}
+                    <ContextMenu.Separator className="dbx-sep" />
+                    <ContextMenu.Item
+                      className="dbx-item"
+                      data-danger=""
+                      onSelect={() => setFolderDelete({ id: node.id, name: node.data.name })}
+                    >
+                      <Trash2 size={15} /> Delete
+                    </ContextMenu.Item>
+                  </>
+                ) : null}
               </ContextMenu.Content>
             </ContextMenu.Portal>
           ) : null}
         </ContextMenu.Root>
       );
     },
-    [selectedFolderId, readOnly, canPasteHere, doPaste],
+    [selectedFolderId, readOnly, canPasteHere, doPaste, folderById, sharedIndex, canShareToJr, shareFolderToJr, stopSharingFolder],
   );
 
   const showTable = rows.length > 0 && !(isSearching ? searchError : loading);
@@ -1411,6 +1512,11 @@ export function DatabankExplorerV2({
               <button type="button" onClick={() => setTrashOpen(true)} disabled={busy} style={toolbarBtn(false)}>
                 <Trash2 size={15} /> Trash
               </button>
+              {canShareToJr ? (
+                <button type="button" onClick={() => setShareDialogOpen(true)} disabled={busy} style={toolbarBtn(false)}>
+                  <Share2 size={15} /> Share to JR
+                </button>
+              ) : null}
               <span style={{ fontSize: 12, color: muted, whiteSpace: 'nowrap' }}>
                 into {selectedFolderId ? breadcrumb[breadcrumb.length - 1]?.name ?? rootLabel : rootLabel}
               </span>
@@ -1562,6 +1668,12 @@ export function DatabankExplorerV2({
                     </button>
                   </span>
                 ))}
+                {/* Whole-client shared-to-JR indicator (manager view). */}
+                {canShareToJr && sharedIndex.clientShared ? (
+                  <span style={{ ...sharedChip, marginLeft: 4 }}>
+                    <Share2 size={11} /> Shared with JR
+                  </span>
+                ) : null}
               </div>
             )}
             {readOnly ? (
@@ -1729,7 +1841,12 @@ export function DatabankExplorerV2({
                     {/* Subfolder rows — shown at the top of the SAME table (not a
                         separate section), click to open; hidden while searching. */}
                     {!isSearching
-                      ? currentSubfolders.map((f) => (
+                      ? currentSubfolders.map((f) => {
+                          // Per-row read-only: a JR shared-in Processing folder stays
+                          // immutable in a writable pane. `sharedToJr` = its active share.
+                          const rowReadOnly = readOnly || f.readOnly === true;
+                          const sharedToJr = sharedIndex.folderShareByFolderId.get(f.id);
+                          return (
                           <ContextMenu.Root key={`folder-${f.id}`}>
                             <ContextMenu.Trigger asChild>
                               <div
@@ -1762,6 +1879,16 @@ export function DatabankExplorerV2({
                                   >
                                     {f.name}
                                   </div>
+                                  {f.readOnly === true ? (
+                                    <span style={sharedFromChip} title="Shared from Processing — read-only">
+                                      Shared from Processing
+                                    </span>
+                                  ) : null}
+                                  {canShareToJr && sharedToJr ? (
+                                    <span style={sharedChip} title="Shared with JR">
+                                      <Share2 size={11} /> Shared with JR
+                                    </span>
+                                  ) : null}
                                 </div>
                                 {/* Size */}
                                 <div style={{ fontSize: 12.5, color: muted, textAlign: 'right', whiteSpace: 'nowrap' }}>—</div>
@@ -1784,54 +1911,71 @@ export function DatabankExplorerV2({
                                   >
                                     <Copy size={15} /> Copy
                                   </ContextMenu.Item>
-                                  <ContextMenu.Item
-                                    className="dbx-item"
-                                    onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: f.id, name: f.name } })}
-                                  >
-                                    <Scissors size={15} /> Cut
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(f.id)} onSelect={() => void doPaste(f.id)}>
-                                    <ClipboardPaste size={15} /> Paste here
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Item
-                                    className="dbx-item"
-                                    onSelect={() => {
-                                      setSelectedFolderId(f.id);
-                                      fileInputRef.current?.click();
-                                    }}
-                                  >
-                                    <Upload size={15} /> Upload files here…
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
-                                  <ContextMenu.Separator className="dbx-sep" />
-                                  <ContextMenu.Item
-                                    className="dbx-item"
-                                    onSelect={() => {
-                                      setSelectedFolderId(f.id);
-                                      setNewFolderOpen(true);
-                                    }}
-                                  >
-                                    <FolderPlus size={15} /> New subfolder…
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Item className="dbx-item" onSelect={() => setFolderRename({ id: f.id, name: f.name })}>
-                                    <Pencil size={15} /> Rename…
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: f.id, name: f.name })}>
-                                    <FolderInput size={15} /> Move to…
-                                  </ContextMenu.Item>
-                                  <ContextMenu.Separator className="dbx-sep" />
-                                  <ContextMenu.Item
-                                    className="dbx-item"
-                                    data-danger=""
-                                    onSelect={() => setFolderDelete({ id: f.id, name: f.name })}
-                                  >
-                                    <Trash2 size={15} /> Delete
-                                  </ContextMenu.Item>
+                                  {/* Mutating actions suppressed for a JR shared-in (read-only) folder. */}
+                                  {!rowReadOnly ? (
+                                    <>
+                                      <ContextMenu.Item
+                                        className="dbx-item"
+                                        onSelect={() => setClipboard({ op: 'cut', files: [], folder: { id: f.id, name: f.name } })}
+                                      >
+                                        <Scissors size={15} /> Cut
+                                      </ContextMenu.Item>
+                                      <ContextMenu.Item className="dbx-item" disabled={!canPasteHere(f.id)} onSelect={() => void doPaste(f.id)}>
+                                        <ClipboardPaste size={15} /> Paste here
+                                      </ContextMenu.Item>
+                                      <ContextMenu.Item
+                                        className="dbx-item"
+                                        onSelect={() => {
+                                          setSelectedFolderId(f.id);
+                                          fileInputRef.current?.click();
+                                        }}
+                                      >
+                                        <Upload size={15} /> Upload files here…
+                                      </ContextMenu.Item>
+                                      <ContextMenu.Label className="dbx-hint">Tip: Ctrl+V or drag to paste from your computer</ContextMenu.Label>
+                                      <ContextMenu.Separator className="dbx-sep" />
+                                      <ContextMenu.Item
+                                        className="dbx-item"
+                                        onSelect={() => {
+                                          setSelectedFolderId(f.id);
+                                          setNewFolderOpen(true);
+                                        }}
+                                      >
+                                        <FolderPlus size={15} /> New subfolder…
+                                      </ContextMenu.Item>
+                                      <ContextMenu.Item className="dbx-item" onSelect={() => setFolderRename({ id: f.id, name: f.name })}>
+                                        <Pencil size={15} /> Rename…
+                                      </ContextMenu.Item>
+                                      <ContextMenu.Item className="dbx-item" onSelect={() => setFolderMove({ id: f.id, name: f.name })}>
+                                        <FolderInput size={15} /> Move to…
+                                      </ContextMenu.Item>
+                                      {canShareToJr ? (
+                                        sharedToJr ? (
+                                          <ContextMenu.Item className="dbx-item" onSelect={() => void stopSharingFolder(sharedToJr)}>
+                                            <Share2 size={15} /> Stop sharing with JR
+                                          </ContextMenu.Item>
+                                        ) : (
+                                          <ContextMenu.Item className="dbx-item" onSelect={() => void shareFolderToJr(f.id)}>
+                                            <Share2 size={15} /> Share folder to JR
+                                          </ContextMenu.Item>
+                                        )
+                                      ) : null}
+                                      <ContextMenu.Separator className="dbx-sep" />
+                                      <ContextMenu.Item
+                                        className="dbx-item"
+                                        data-danger=""
+                                        onSelect={() => setFolderDelete({ id: f.id, name: f.name })}
+                                      >
+                                        <Trash2 size={15} /> Delete
+                                      </ContextMenu.Item>
+                                    </>
+                                  ) : null}
                                 </ContextMenu.Content>
                               </ContextMenu.Portal>
                             ) : null}
                           </ContextMenu.Root>
-                        ))
+                          );
+                        })
                       : null}
 
                     {/* Virtualized rows */}
@@ -1840,6 +1984,9 @@ export function DatabankExplorerV2({
                         const row = rows[vi.index];
                         const file = row.original;
                         const isSelected = row.getIsSelected();
+                        // Per-row read-only: a JR shared-in Processing file stays
+                        // immutable even in a writable pane.
+                        const rowReadOnly = readOnly || file.readOnly === true;
                         return (
                           <ContextMenu.Root key={row.id}>
                             <ContextMenu.Trigger asChild>
@@ -1904,6 +2051,11 @@ export function DatabankExplorerV2({
                                       </div>
                                     ) : null}
                                   </div>
+                                  {file.readOnly === true ? (
+                                    <span style={sharedFromChip} title="Shared from Processing — read-only">
+                                      Shared from Processing
+                                    </span>
+                                  ) : null}
                                 </div>
 
                                 {/* Size */}
@@ -1935,29 +2087,35 @@ export function DatabankExplorerV2({
                                 </ContextMenu.Item>
                                 {!readOnly ? (
                                   <>
+                                    {/* Copy is a read of the source — kept even for a shared-in row. */}
                                     <ContextMenu.Item
                                       className="dbx-item"
                                       onSelect={() => setClipboard({ op: 'copy', files: isSelected && selectionCount > 1 ? selectedFiles : [file], folder: null })}
                                     >
                                       <Copy size={15} /> Copy
                                     </ContextMenu.Item>
-                                    <ContextMenu.Item
-                                      className="dbx-item"
-                                      onSelect={() => setClipboard({ op: 'cut', files: isSelected && selectionCount > 1 ? selectedFiles : [file], folder: null })}
-                                    >
-                                      <Scissors size={15} /> Cut
-                                    </ContextMenu.Item>
-                                    <ContextMenu.Separator className="dbx-sep" />
-                                    <ContextMenu.Item className="dbx-item" onSelect={() => setRenameTarget(file)}>
-                                      <Pencil size={15} /> Rename…
-                                    </ContextMenu.Item>
-                                    <ContextMenu.Item className="dbx-item" onSelect={() => setMoveTargets([file])}>
-                                      <FolderInput size={15} /> Move to…
-                                    </ContextMenu.Item>
-                                    <ContextMenu.Separator className="dbx-sep" />
-                                    <ContextMenu.Item className="dbx-item" data-danger="" onSelect={() => setDeleteTargets([file])}>
-                                      <Trash2 size={15} /> Delete
-                                    </ContextMenu.Item>
+                                    {/* Mutating actions suppressed for a JR shared-in (read-only) file. */}
+                                    {!rowReadOnly ? (
+                                      <>
+                                        <ContextMenu.Item
+                                          className="dbx-item"
+                                          onSelect={() => setClipboard({ op: 'cut', files: isSelected && selectionCount > 1 ? selectedFiles : [file], folder: null })}
+                                        >
+                                          <Scissors size={15} /> Cut
+                                        </ContextMenu.Item>
+                                        <ContextMenu.Separator className="dbx-sep" />
+                                        <ContextMenu.Item className="dbx-item" onSelect={() => setRenameTarget(file)}>
+                                          <Pencil size={15} /> Rename…
+                                        </ContextMenu.Item>
+                                        <ContextMenu.Item className="dbx-item" onSelect={() => setMoveTargets([file])}>
+                                          <FolderInput size={15} /> Move to…
+                                        </ContextMenu.Item>
+                                        <ContextMenu.Separator className="dbx-sep" />
+                                        <ContextMenu.Item className="dbx-item" data-danger="" onSelect={() => setDeleteTargets([file])}>
+                                          <Trash2 size={15} /> Delete
+                                        </ContextMenu.Item>
+                                      </>
+                                    ) : null}
                                   </>
                                 ) : null}
                               </ContextMenu.Content>
@@ -2067,6 +2225,17 @@ export function DatabankExplorerV2({
       </div>
 
       {/* Dialogs (Radix, our own CSS) */}
+      {shareDialogOpen && clientId ? (
+        <ShareDialog
+          api={api}
+          clientId={clientId}
+          onClose={() => setShareDialogOpen(false)}
+          onChanged={async () => {
+            await refreshShares();
+            await reload();
+          }}
+        />
+      ) : null}
       {newFolderOpen ? (
         <NewFolderDialog onClose={() => setNewFolderOpen(false)} onSubmit={submitNewFolder} />
       ) : null}
@@ -2496,6 +2665,171 @@ function DialogShell({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Share to JR (Processing/JR separation, Step 6) — a Processing manager shares
+// the whole client databank, or revokes the whole-client / per-folder shares,
+// from one dialog. Per-folder SHARING is done from a folder's context menu; this
+// dialog is the overview + the place to stop sharing. Every action re-fetches
+// the shares here AND calls back so the explorer refreshes its badges + tree.
+// ---------------------------------------------------------------------------
+function ShareDialog({
+  api,
+  clientId,
+  onClose,
+  onChanged,
+}: {
+  api: DatabankApi;
+  clientId: string;
+  onClose: () => void;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [data, setData] = useState<DatabankSharesResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setData(await api.listShares(clientId));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load the current shares');
+    } finally {
+      setLoading(false);
+    }
+  }, [api, clientId]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  // Run a share/unshare, then refetch THIS dialog and tell the explorer to
+  // refresh its badges + reload the tree.
+  const run = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      setBusy(true);
+      setActionError(null);
+      try {
+        await fn();
+        await refetch();
+        await onChanged();
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : 'Action failed');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refetch, onChanged],
+  );
+
+  const clientShared = data?.clientShared ?? false;
+  const clientShare = data?.shares.find((s) => s.folderId === null) ?? null;
+  const folderShares = data?.shares.filter((s) => s.folderId !== null) ?? [];
+
+  return (
+    <DialogShell
+      title="Share to JR"
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} style={ghostBtn}>
+          Close
+        </button>
+      }
+    >
+      <div style={{ fontSize: 12.5, color: muted, marginBottom: 12 }}>
+        Give the JR department read access to this client&rsquo;s Processing databank — the whole client, or
+        individual folders (right-click a folder to share just that one).
+      </div>
+      {loadError ? <div style={{ fontSize: 12.5, color: danger, marginBottom: 10 }}>{loadError}</div> : null}
+      {actionError ? <div style={{ fontSize: 12.5, color: danger, marginBottom: 10 }}>{actionError}</div> : null}
+
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: '20px 4px' }}>
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Whole-client share */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, border, borderRadius: 10, padding: '10px 12px' }}>
+            <span style={{ color: accent, flexShrink: 0, display: 'inline-flex' }}>
+              <Home size={18} />
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: primary }}>Entire client databank</div>
+              {clientShared ? (
+                <div style={{ fontSize: 11.5, color: muted, marginTop: 2 }}>Shared with JR</div>
+              ) : null}
+            </div>
+            {clientShared && clientShare ? (
+              <button
+                type="button"
+                onClick={() => void run(() => api.unshareFromJr(clientShare.id))}
+                disabled={busy}
+                style={{ ...barBtn, color: danger, borderColor: danger, opacity: busy ? 0.6 : 1 }}
+              >
+                <X size={14} /> Stop sharing
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void run(() => api.shareToJr(clientId))}
+                disabled={busy}
+                style={{ ...barBtn, opacity: busy ? 0.6 : 1 }}
+              >
+                <Share2 size={14} /> Share entire client with JR
+              </button>
+            )}
+          </div>
+
+          {/* Per-folder shares */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+              Shared folders
+            </div>
+            {folderShares.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: muted, padding: '4px 0' }}>
+                No individual folders are shared. Right-click a folder to share it.
+              </div>
+            ) : (
+              folderShares.map((s) => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border, borderRadius: 10, padding: '8px 10px' }}>
+                  <span style={{ color: accent, flexShrink: 0, display: 'inline-flex' }}>
+                    <Folder size={16} />
+                  </span>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      flex: 1,
+                      fontSize: 13,
+                      color: s.folderName ? primary : muted,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={s.folderName ?? undefined}
+                  >
+                    {s.folderName ?? '(folder removed)'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void run(() => api.unshareFromJr(s.id))}
+                    disabled={busy}
+                    style={{ ...barBtn, color: danger, borderColor: danger, opacity: busy ? 0.6 : 1 }}
+                  >
+                    <X size={14} /> Stop sharing
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </DialogShell>
   );
 }
 
@@ -3402,6 +3736,43 @@ const tagChip: React.CSSProperties = {
   border,
   borderRadius: 999,
   padding: '2px 9px',
+};
+
+/** Accent pill marking a Processing folder/client actively shared to JR. */
+const sharedChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  flexShrink: 0,
+  fontSize: 10.5,
+  fontWeight: 700,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: accent,
+  background: accentSoft,
+  border,
+  borderColor: accent,
+  borderRadius: 999,
+  padding: '1px 8px',
+  whiteSpace: 'nowrap',
+};
+
+/** Muted, read-only pill on a row shared IN to JR from Processing. */
+const sharedFromChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  flexShrink: 0,
+  fontSize: 10.5,
+  fontWeight: 600,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: muted,
+  background: 'var(--sos-surface-hover, rgba(148,163,184,0.10))',
+  border,
+  borderRadius: 999,
+  padding: '1px 8px',
+  whiteSpace: 'nowrap',
 };
 
 export default DatabankExplorerV2;

@@ -480,11 +480,11 @@ export class DatabankService {
     const canWrite = await this.canWriteClient(clientId, user);
     // Whether the shared UI shows the Share-to-JR control: ON only in the
     // Processing portal for a manager (the only role that may grant a share).
-    // Naturally false when separation is OFF and in the JR portal.
-    const canShareToJr =
-      this.separationEnabled() &&
-      viewerDept === DatabankDepartment.PROCESSING &&
-      this.canViewAll(user);
+    // Deliberately NOT gated on separationEnabled() — a manager can pre-share the
+    // clients/folders JR will need BEFORE separation is switched on, so the
+    // cutover has no gap (shares sit dormant until the flag flips). Always false
+    // in the JR portal and for non-managers.
+    const canShareToJr = viewerDept === DatabankDepartment.PROCESSING && this.canViewAll(user);
 
     const folderSelect = {
       id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true,

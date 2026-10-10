@@ -10,6 +10,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { LeadsService } from '../leads/leads.service';
+import { resolveHandoverService } from '../finance/handover-service.util';
 import { CreateExternalMatterDto, EscalateCaseDto } from './judicial-review.dto';
 import { CURRENT_DEADLINE_RULE_SET_VERSION, toLegalDateUtc } from './jr-deadline-engine';
 
@@ -287,10 +288,14 @@ export class JrIntakeService {
       );
     }
 
-    // 3. Defensive: this path is ONLY for Judicial Review agreements.
-    if (handover.lead.serviceInterest !== 'JR_RESUBMISSION') {
+    // 3. Defensive: this path is ONLY for Judicial Review agreements. Keyed on
+    //    the SIGNED AGREEMENT's template (what the customer actually bought),
+    //    not Lead.serviceInterest — so a JR agreement on a mis-tagged lead is
+    //    still accepted, matching the processing fork (resolveHandoverService).
+    const resolvedService = await resolveHandoverService(this.prisma, handover);
+    if (resolvedService !== 'JR_RESUBMISSION') {
       throw new BadRequestException(
-        'This handover is not a Judicial Review (JR_RESUBMISSION) agreement.',
+        'This handover is not a Judicial Review (JR) agreement.',
       );
     }
 

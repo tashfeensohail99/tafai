@@ -55,6 +55,16 @@ export interface ApiHandoverLead {
   status: string;
   serviceInterest: string | null;
   targetCountry: string | null;
+  /** Owning sales rep — so Finance can reach them to request changes. */
+  assignedEmployee?: { firstName: string; lastName: string; pbxExtension: string | null } | null;
+}
+
+/** "Sales: Firstname L. · ext 142" for a handover's owning rep (or null). */
+export function salesRepLabel(handover: ApiHandover): string | null {
+  const e = handover.lead.assignedEmployee;
+  if (!e) return null;
+  const name = `${e.firstName} ${e.lastName}`.trim();
+  return e.pbxExtension ? `${name} · ext ${e.pbxExtension}` : name;
 }
 
 export interface ApiHandoverInvoice {

@@ -3345,6 +3345,10 @@ export class FinanceService {
         status: true,
         serviceInterest: true,
         targetCountry: true,
+        // Owning sales rep — surfaced on the Finance dashboard so Finance can
+        // call/message them directly (by Telenor extension) to request changes,
+        // instead of hunting for who owns the file.
+        assignedEmployee: { select: { firstName: true, lastName: true, pbxExtension: true } },
       },
     },
     invoice: {

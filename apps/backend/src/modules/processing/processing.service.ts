@@ -49,6 +49,7 @@ const execFileAsync = promisify(execFile);
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
+import { resolveHandoverService } from '../finance/handover-service.util';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../common/phone/phone.util';
 import { resolveProgram } from '../../common/program-alias';
@@ -564,24 +565,25 @@ export class ProcessingService {
       throw new ConflictException('A processing case has already been created for this handover');
     }
 
-    // Resolve service and country from lead. The Sales→Finance gate
-    // (agreements.service.ts) already requires a canonical service code
-    // before the agreement can be submitted, so by the time a finance
-    // handover exists the lead.serviceInterest should be one of the codes
-    // in SERVICE_TYPE_CODES. Defensive check here too — surfaces a clear
-    // error if a legacy free-text or null value somehow reaches here.
-    const service = handover.lead.serviceInterest;
+    // Resolve the service from the AGREEMENT the customer actually signed (its
+    // template category), NOT from Lead.serviceInterest — that single tag goes
+    // stale when a returning/mis-tagged client buys a different service than
+    // their lead was first classified as. This is what fixes Finance's report
+    // that "a JR client who signs a visit-visa agreement still converts to JR"
+    // (and the reverse). The lead tag remains the fallback for manual handovers
+    // with no agreement. See resolveHandoverService.
+    const service = await resolveHandoverService(this.prisma, handover);
     if (!service || !isCanonicalServiceCode(service)) {
       throw new BadRequestException(
-        `Lead ${handover.leadId} has no canonical service code on file (got: "${service ?? 'null'}"). ` +
-          'Sales must reclassify the lead to one of the coded service types before this case can move to Processing.',
+        `Handover ${dto.financeHandoverId} has no canonical service on file (resolved: "${service ?? 'null'}"). ` +
+          'The agreement template is unmapped and the lead has no coded service — reclassify before sending to Processing.',
       );
     }
 
     // Judicial Review agreements are NOT processing cases — they open a JrMatter
     // in the JR Head's queue instead (same finance button, same permission). Fork
     // here, before any ProcessingCase is created, so JR clients stop being
-    // mis-routed into Processing.
+    // mis-routed into Processing. Keyed on the resolved service (agreement-based).
     if (service === 'JR_RESUBMISSION') {
       const matter = await this.jrIntake.createFromHandover(dto.financeHandoverId, user);
       return { kind: 'jr', matter };

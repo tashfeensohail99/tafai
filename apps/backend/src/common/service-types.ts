@@ -29,3 +29,28 @@ export const SERVICE_TYPE_CODE_SET: ReadonlySet<string> = new Set(SERVICE_TYPE_C
 export function isCanonicalServiceCode(value: string | null | undefined): boolean {
   return !!value && SERVICE_TYPE_CODE_SET.has(value);
 }
+
+/**
+ * Agreement-template category (`finance.agreement_templates.categoryKey`) → the
+ * canonical service code it represents. The template is what the customer
+ * ACTUALLY signed, so routing (JR vs Processing) and the processing case's
+ * service should derive from THIS — not from `Lead.serviceInterest`, which is a
+ * single mutable tag that goes stale when a returning client buys a different
+ * service than their lead was first classified as. Unmapped categories fall back
+ * to the lead tag at the call site.
+ */
+export const TEMPLATE_CATEGORY_TO_SERVICE: Readonly<Record<string, ServiceTypeCode>> = {
+  JR: 'JR_RESUBMISSION',
+  VISIT_VISA: 'VISIT_VISA',
+  C11: 'WORK_PERMIT',
+  C10: 'WORK_PERMIT',
+  E2: 'E2_VISA',
+  EB2_NIW: 'PR_CASE',
+  FINLAND_STARTUP: 'WORK_PERMIT',
+};
+
+/** Canonical service for a template category, or null when the category is
+ *  unknown/unmapped (caller then falls back to the lead's serviceInterest). */
+export function serviceForTemplateCategory(categoryKey: string | null | undefined): ServiceTypeCode | null {
+  return (categoryKey && TEMPLATE_CATEGORY_TO_SERVICE[categoryKey]) || null;
+}

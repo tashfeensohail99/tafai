@@ -32,6 +32,7 @@ import {
   fmtAmount,
   fmtRelative,
   clientName,
+  salesRepLabel,
   STATUS_LABEL,
   METHOD_LABEL,
   type ApiHandover,
@@ -349,6 +350,11 @@ function QueueRow({ item }: { item: ApiHandover }) {
             {fmtAmount(item.submittedAmount, item.currency)} ·{' '}
             {item.paymentMethod ? METHOD_LABEL[item.paymentMethod] ?? item.paymentMethod : '—'}
           </div>
+          {salesRepLabel(item) ? (
+            <div style={{ marginTop: '3px', fontSize: '11.5px', color: 'var(--sos-text-muted)' }}>
+              <span style={{ fontWeight: 700 }}>Sales:</span> {salesRepLabel(item)}
+            </div>
+          ) : null}
         </div>
 
         <div style={{ textAlign: 'right' }}>
@@ -483,6 +489,11 @@ function ProblemPileCard({ items }: { items: ApiHandover[] }) {
                   >
                     {p.financeNotes ?? STATUS_LABEL[p.status]}
                   </div>
+                  {salesRepLabel(p) ? (
+                    <div className="sos-text-faint" style={{ marginTop: '1px', fontSize: '10.5px' }}>
+                      Sales: {salesRepLabel(p)}
+                    </div>
+                  ) : null}
                 </div>
                 <StatusBadge tone="warning" size="sm">
                   {fmtRelative(p.submittedAt)}

@@ -535,6 +535,8 @@ export class FinanceProfileService {
         targetCountry: true,
         convertedClientId: true,
         createdAt: true,
+        // Owning sales rep — so Finance can call them (Telenor ext) to request a change.
+        assignedEmployee: { select: { firstName: true, lastName: true, pbxExtension: true } },
       },
       orderBy: { createdAt: 'desc' },
       take,
@@ -615,6 +617,7 @@ export class FinanceProfileService {
         serviceInterest: lead.serviceInterest,
         targetCountry: lead.targetCountry,
         status: lead.status,
+        assignedEmployee: lead.assignedEmployee ?? null,
         agreementStatus: agreement?.status ?? null,
         hasContract: !!contract,
         contractStatus: contract?.status ?? null,

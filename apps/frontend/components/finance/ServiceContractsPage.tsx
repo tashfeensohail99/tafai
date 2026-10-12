@@ -615,6 +615,12 @@ export function ServiceContractsPage() {
                         {customer ? (
                           <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>{customer.referenceCode}</div>
                         ) : null}
+                        {c.lead?.assignedEmployee ? (
+                          <div style={{ fontSize: 11, color: 'var(--sos-text-faint)', marginTop: 1 }}>
+                            Sales: {`${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}`.trim()}
+                            {c.lead.assignedEmployee.pbxExtension ? ` · ext ${c.lead.assignedEmployee.pbxExtension}` : ''}
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ padding: '14px 16px', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 }}>
                         {fmtMoney(c.totalAmount, c.currency)}

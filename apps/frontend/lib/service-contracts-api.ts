@@ -12,6 +12,9 @@ export interface ApiContact {
   phone: string;
   email: string | null;
   referenceCode: string;
+  /** Owning sales rep — populated on the LEAD only (so Finance can reach them).
+   *  The client's officer is a different person and is not included here. */
+  assignedEmployee?: { firstName: string; lastName: string; pbxExtension: string | null } | null;
 }
 
 export interface ApiInvoiceRef {

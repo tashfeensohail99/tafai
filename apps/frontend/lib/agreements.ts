@@ -177,8 +177,13 @@ export interface AgreementSummary {
   submittedAt: string | null;
   /** Set when Finance bounced it back — present on a re-submission. */
   financeNotes?: string | null;
-  /** The lead this agreement belongs to — for the Applicant + Ref columns. */
-  lead?: { firstName: string; lastName: string; referenceCode: string } | null;
+  /** The lead this agreement belongs to — for the Applicant + Ref + Associate columns. */
+  lead?: {
+    firstName: string;
+    lastName: string;
+    referenceCode: string;
+    assignedEmployee?: { firstName: string | null; lastName: string | null; pbxExtension: string | null } | null;
+  } | null;
 }
 
 export interface AgreementEvent {

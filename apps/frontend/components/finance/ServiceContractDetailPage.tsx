@@ -222,6 +222,12 @@ export function ServiceContractDetailPage({ contractId }: Props) {
   if (!contract) return null;
 
   const customer = contract.client ?? contract.lead;
+  // Owning sales rep comes from the LEAD (the sales origin), so Finance can call
+  // them on their Telenor extension to request a change.
+  const rep = contract.lead?.assignedEmployee;
+  const salesRepStr = rep
+    ? ` · Sales: ${`${rep.firstName} ${rep.lastName}`.trim()}${rep.pbxExtension ? ` (ext ${rep.pbxExtension})` : ''}`
+    : '';
   const paidAmount = contract.installments
     .filter((i) => i.status === 'PAID')
     .reduce((acc, i) => acc + Number(i.amount), 0);
@@ -249,7 +255,7 @@ export function ServiceContractDetailPage({ contractId }: Props) {
         title={displayContactName(customer)}
         description={
           customer
-            ? `${customer.referenceCode} · ${customer.phone}${customer.email ? ` · ${customer.email}` : ''}`
+            ? `${customer.referenceCode} · ${customer.phone}${customer.email ? ` · ${customer.email}` : ''}${salesRepStr}`
             : 'No linked customer'
         }
         actions={<StatusBadge tone={statusTone(contract.status)} size="md">{contract.status}</StatusBadge>}

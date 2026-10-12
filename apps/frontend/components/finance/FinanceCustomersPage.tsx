@@ -143,6 +143,12 @@ export function FinanceCustomersPage() {
                       <td style={td}>
                         <div style={{ fontWeight: 600, color: 'var(--sos-text-primary)' }}>{name}</div>
                         <div style={{ fontFamily: 'monospace', fontSize: 11.5, color: 'var(--sos-text-faint)' }}>{c.referenceCode} · {c.phone}</div>
+                        {c.assignedEmployee && (c.assignedEmployee.firstName || c.assignedEmployee.lastName) ? (
+                          <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', marginTop: 2 }}>
+                            <span style={{ fontWeight: 600 }}>Sales:</span> {`${c.assignedEmployee.firstName ?? ''} ${c.assignedEmployee.lastName ?? ''}`.trim()}
+                            {c.assignedEmployee.pbxExtension ? ` · ext ${c.assignedEmployee.pbxExtension}` : ''}
+                          </div>
+                        ) : null}
                       </td>
                       <td style={td}>
                         <div>{labelForServiceCode(c.serviceInterest)}</div>

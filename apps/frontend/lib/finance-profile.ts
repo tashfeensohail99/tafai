@@ -165,6 +165,8 @@ export interface FinanceCustomerRow {
   serviceInterest: string | null;
   targetCountry: string | null;
   status: string;
+  /** Owning sales rep — so Finance can reach them (name + Telenor extension). */
+  assignedEmployee: { firstName: string | null; lastName: string | null; pbxExtension: string | null } | null;
   agreementStatus: string | null;
   hasContract: boolean;
   contractStatus: string | null;

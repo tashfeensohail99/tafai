@@ -30,6 +30,14 @@ const CONTACT_SELECT = {
   referenceCode: true,
 } as const;
 
+// The LEAD also carries the owning sales rep — surfaced on the contract page so
+// Finance can call them (by Telenor extension) to request a change. Only on the
+// lead select (the client's assignedEmployee is the processing officer, not sales).
+const LEAD_CONTACT_SELECT = {
+  ...CONTACT_SELECT,
+  assignedEmployee: { select: { firstName: true, lastName: true, pbxExtension: true } },
+} as const;
+
 const ALLOWED_AGREEMENT_MIME_TYPES = new Set([
   'application/pdf',
   'image/png',
@@ -79,7 +87,7 @@ export class ServiceContractsService {
     return this.prisma.serviceContract.findMany({
       where,
       include: {
-        lead: { select: CONTACT_SELECT },
+        lead: { select: LEAD_CONTACT_SELECT },
         client: { select: CONTACT_SELECT },
         installments: {
           orderBy: { sequence: 'asc' },
@@ -101,7 +109,7 @@ export class ServiceContractsService {
     const contract = await this.prisma.serviceContract.findFirst({
       where: { id, deletedAt: null },
       include: {
-        lead: { select: CONTACT_SELECT },
+        lead: { select: LEAD_CONTACT_SELECT },
         client: { select: CONTACT_SELECT },
         installments: {
           orderBy: { sequence: 'asc' },

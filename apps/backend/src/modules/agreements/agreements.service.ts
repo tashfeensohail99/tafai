@@ -1077,7 +1077,15 @@ export class AgreementsService {
     const leads = leadIds.length
       ? await this.prisma.lead.findMany({
           where: { id: { in: leadIds } },
-          select: { id: true, firstName: true, lastName: true, referenceCode: true },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            referenceCode: true,
+            // Owning sales associate — the "Associate" column on the review list,
+            // so Finance sees (and can call) who to chase for changes.
+            assignedEmployee: { select: { firstName: true, lastName: true, pbxExtension: true } },
+          },
         })
       : [];
     const leadMap = new Map(leads.map((l) => [l.id, l]));

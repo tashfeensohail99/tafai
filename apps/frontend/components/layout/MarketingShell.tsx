@@ -1,4 +1,6 @@
 'use client';
+
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 // Marketing workspace shell — mirrors ReceptionShell / ProcessingShell.
 // A marketing-role user logs in and lands here; the Overview is home.
 
@@ -256,6 +258,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
 
         {/* ── Main content ─────────────────────────────────────────────── */}
         <div className="sos-content">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

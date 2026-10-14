@@ -1,4 +1,6 @@
 'use client';
+
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 // HR workspace shell — its own module (mirrors ReceptionShell / FinanceShell).
 // An `hr`-role user logs in and lands here; admins can also reach it.
 
@@ -147,6 +149,7 @@ export function HrShell({ children }: { children: ReactNode }) {
         )}
 
         <div className="sos-main">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button type="button" aria-label="Open menu" onClick={() => setMobileOpen(true)} className="sos-topbar__mobile-toggle"
               style={{ background: 'transparent', border: 'none', color: 'var(--sos-topbar-icon)', cursor: 'pointer', padding: '8px', borderRadius: '10px', display: 'flex', alignItems: 'center' }}>

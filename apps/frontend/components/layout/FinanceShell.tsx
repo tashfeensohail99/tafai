@@ -1,4 +1,6 @@
 'use client';
+
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 // Finance workspace shell — parallel to EmployeeShell.
 // No theme provider here — the root layout owns that. We only consume
 // useTheme via ThemeToggle in the topbar.
@@ -254,6 +256,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
 
         {/* Content */}
         <div className="sos-content">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

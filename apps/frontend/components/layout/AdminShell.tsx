@@ -1,5 +1,7 @@
 'use client';
 
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+
 import {
   ArrowRightLeft,
   BadgeDollarSign,
@@ -370,6 +372,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
         {/* ── Content ─────────────────────────────────────────────────── */}
         <div className="sos-content">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

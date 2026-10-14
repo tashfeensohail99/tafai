@@ -12,6 +12,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/update/app_update.dart';
 import '../../../core/update/forced_update_screen.dart';
+import '../../../core/system_alerts/system_alert_banner.dart';
 import '../../appointments/presentation/appointments_screen.dart';
 import '../../calls/data/call_permissions.dart';
 import '../../calls/domain/call_history.dart';
@@ -256,6 +257,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
       body: Column(
         children: [
+          const SystemAlertBanner(),
           Expanded(
             child: Builder(builder: (_) {
               _visited.add(index);

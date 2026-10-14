@@ -9,6 +9,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/update/app_update.dart';
 import '../../../core/update/forced_update_screen.dart';
+import '../../../core/system_alerts/system_alert_banner.dart';
 import '../../finance/presentation/finance_agreements_screen.dart';
 import '../../finance/presentation/finance_customers_screen.dart';
 import '../../finance/presentation/finance_dashboard_screen.dart';
@@ -142,13 +143,20 @@ class FinanceShell extends ConsumerWidget {
           ),
         ),
       ),
-      body: IndexedStack(
-        index: index,
-        children: const [
-          FinanceDashboardScreen(),
-          FinanceCustomersScreen(),
-          FinanceAgreementsScreen(),
-          InboxScreen(),
+      body: Column(
+        children: [
+          const SystemAlertBanner(),
+          Expanded(
+            child: IndexedStack(
+              index: index,
+              children: const [
+                FinanceDashboardScreen(),
+                FinanceCustomersScreen(),
+                FinanceAgreementsScreen(),
+                InboxScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: NavigationBarTheme(

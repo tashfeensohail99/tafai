@@ -9,6 +9,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/update/app_update.dart';
 import '../../../core/update/forced_update_screen.dart';
+import '../../../core/system_alerts/system_alert_banner.dart';
 import '../../processing/data/processing_providers.dart';
 import '../../processing/presentation/shell_tabs/dashboard_tab.dart';
 import '../../processing/presentation/shell_tabs/documents_queue_tab.dart';
@@ -162,9 +163,16 @@ class ProcessingShell extends ConsumerWidget {
           ),
         ),
       ),
-      body: IndexedStack(
-        index: index,
-        children: [for (final t in tabs) t.body],
+      body: Column(
+        children: [
+          const SystemAlertBanner(),
+          Expanded(
+            child: IndexedStack(
+              index: index,
+              children: [for (final t in tabs) t.body],
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(

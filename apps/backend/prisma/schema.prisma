@@ -5137,6 +5137,29 @@ model Notification {
   @@schema("core")
 }
 
+/// One row per monitored service (whatsapp_billing, openai_quota, supabase_db,
+/// telenor_proxy). The ServiceHealthSentinel sweeper flips `active` on detecting
+/// an outage and back on recovery; the frontend reads active rows to show a
+/// banner, and transitions fire a finance/admin email + bell. See
+/// ServiceHealthSentinelService.
+model SystemAlert {
+  id         String    @id @default(uuid())
+  key        String    @unique // stable service key, e.g. 'whatsapp_billing'
+  active     Boolean   @default(false)
+  severity   String    @default("critical") // 'critical' | 'warning'
+  title      String
+  message    String // customer/rep-facing banner text
+  detail     String? // internal detail for the admin alert (counts, codes)
+  startedAt  DateTime? // when the current outage began
+  resolvedAt DateTime? // when it last cleared
+  lastSeenAt DateTime  @default(now()) // last time the sweeper confirmed it down
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@map("system_alerts")
+  @@schema("core")
+}
+
 enum DevicePlatform {
   ANDROID
   IOS

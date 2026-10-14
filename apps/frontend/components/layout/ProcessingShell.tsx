@@ -1,4 +1,6 @@
 'use client';
+
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 // Processing workspace shell — mirrors FinanceShell pattern.
 // Sidebar with nav + live KPI panel, responsive off-canvas on mobile.
 
@@ -342,6 +344,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
 
         {/* ── Main content ─────────────────────────────────────────────── */}
         <div className="sos-main">
+          <SystemAlertBanner />
           {/* Topbar */}
           <header className="sos-topbar">
             <button

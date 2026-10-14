@@ -1,5 +1,7 @@
 'use client';
 
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+
 import { useState, type ReactNode } from 'react';
 import type { NavGroup } from './Sidebar';
 import { Sidebar } from './Sidebar';
@@ -54,6 +56,7 @@ export function AppShell({
         />
 
         <main className="relative z-10 flex-1 overflow-y-auto p-4 pb-10 sm:p-6 lg:p-8 lg:pr-10">
+          <SystemAlertBanner />
           {children}
         </main>
       </div>

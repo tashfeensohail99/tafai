@@ -1,5 +1,7 @@
 'use client';
 
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+
 // Judicial Review workspace shell — mirrors ProcessingShell.
 // Login-gated (same STAFF_ROLES as the old /jr prototype), a permission-gated
 // sidebar, and a topbar with a "Back to workspace" link. The shell only gates +
@@ -260,6 +262,7 @@ export function JrShell({ children }: { children: ReactNode }) {
 
         {/* ── Main content ─────────────────────────────────────────────── */}
         <div className="sos-main">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

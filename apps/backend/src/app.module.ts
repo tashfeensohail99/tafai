@@ -53,6 +53,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AppointmentRequestsModule } from './modules/appointment-requests/appointment-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ServiceHealthModule } from './modules/service-health/service-health.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
 import { PushModule } from './modules/push/push.module';
 import { DevicesModule } from './modules/devices/devices.module';
@@ -124,6 +125,7 @@ import { JudicialReviewModule } from './modules/judicial-review/judicial-review.
     AiModule,
     AppointmentRequestsModule,
     NotificationsModule,
+    ServiceHealthModule,
     RemindersModule,
     PushModule,
     DevicesModule,

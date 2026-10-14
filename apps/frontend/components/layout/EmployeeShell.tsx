@@ -1,5 +1,7 @@
 'use client';
 
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+
 import {
   CalendarDays,
   ChevronRight,
@@ -395,6 +397,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
         {/* Content */}
         <div className="sos-content">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

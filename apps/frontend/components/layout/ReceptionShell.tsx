@@ -1,4 +1,6 @@
 'use client';
+
+import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 // Reception / Front-Desk workspace shell — mirrors ProcessingShell / FinanceShell.
 // A reception-role user logs in and lands here; the front-desk console is the home.
 
@@ -213,6 +215,7 @@ export function ReceptionShell({ children }: { children: ReactNode }) {
 
         {/* ── Main content ─────────────────────────────────────────────── */}
         <div className="sos-main">
+          <SystemAlertBanner />
           <header className="sos-topbar">
             <button
               type="button"

@@ -1468,7 +1468,7 @@ export class OrchestratorService {
             `Do EXACTLY ONE of these (in the house voice/language described further down):`,
             `  (a) Ask ONE short clarifying question to pin down what they need — e.g. which service: work permit / PR / study permit / visit visa; OR`,
             `  (b) Invite them to book a consultation call appointment to go through the exact details together (ask what time suits them and suggest our hours).`,
-            `FORBIDDEN this turn: naming a program as the answer, saying what a program "is for", any eligibility ("you qualify" / "you may be eligible" / "you can apply"), any fees / minimum funds / timelines / requirements, and any guess. If even slightly unsure, choose (b). (You MAY still greet and use the KNOWN FACTS below — office, hours, phone, the service-name list — normally.)`,
+            `FORBIDDEN this turn: naming a program as the answer, saying what a program "is for", any eligibility ("you qualify" / "you may be eligible" / "you can apply"), any fees / minimum funds / timelines / requirements, and any guess. If even slightly unsure, choose (b). (You MAY still greet and use the KNOWN FACTS below — office, hours, phone, the service-name list, upcoming events — normally.)`,
             ``,
           ]
         : []),
@@ -1544,6 +1544,13 @@ export class OrchestratorService {
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,
       `- Written agreement always signed before any payment.`,
       `- The initial CONSULTATION IS FREE — there is NO consultation, booking, or meeting fee (phone, Google Meet, or office visit). Service/case fees for the actual work are only discussed during that free consultation.`,
+      `- UPCOMING EVENT (PESHAWAR): We are holding a one-time event in Peshawar. We do NOT have a permanent Peshawar office — always describe this as an upcoming event/session, NEVER as an office or branch. If the customer mentions Peshawar in ANY spelling or language — e.g. "Peshawar", "Peshawer", "Pashawar", "Pekhawar", "peshwar", "pishawar", or Urdu "پشاور" — or asks whether we are coming to / have anything in Peshawar, share these event details (translate naturally into the customer's language, English or Roman Urdu):`,
+      `    • One-to-One Meet-Up Session — a chance to meet our expert team in person.`,
+      `    • Date: Sunday, 1st November 2026.`,
+      `    • Booking charges: Free.`,
+      `    • Refreshments: Hi-tea will be served.`,
+      `    • Venue: To be announced soon — say exactly "venue to be announced soon" (it is not finalised yet).`,
+      `  Invite them to reserve a free spot and offer to note their interest so the team can confirm the venue with them once it is set. Do NOT invent a venue, address, exact timing, or any detail not listed here.`,
       ``,
       `Reply with JUST the message text — no JSON, no markdown, no prefix.`,
     ].join('\n');

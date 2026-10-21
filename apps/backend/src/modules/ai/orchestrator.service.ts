@@ -172,6 +172,15 @@ function clampToOfficeHours(proposed: Date): Date {
  */
 const DUPLICATE_REPLY_JACCARD = 0.7;
 
+/**
+ * Bot-initiated brochure/document auto-send. DISABLED by default per business
+ * decision (2026-10-21): the team asked the bot to stop sending documents /
+ * catalogues automatically. Re-enable by setting AI_BOT_BROCHURES_ENABLED=true
+ * on the backend service — no code change needed. This flag ONLY gates the
+ * bot's automatic attach; reps' manual brochure/template sends are unaffected.
+ */
+const BROCHURE_AUTO_SEND_ENABLED = process.env.AI_BOT_BROCHURES_ENABLED === 'true';
+
 export type RunMode = 'AUTO' | 'SKIPPED' | 'OPT_OUT';
 
 export interface OrchestratorInput {
@@ -558,7 +567,7 @@ export class OrchestratorService {
     // processor sends the brochure as a follow-up DOCUMENT message after the
     // text reply lands. Dedup: same brochure already on this thread → skip.
     let attachBrochure: OrchestratorDecision['attachBrochure'] | undefined;
-    if (this.mentionsBrochure(input.inboundText)) {
+    if (BROCHURE_AUTO_SEND_ENABLED && this.mentionsBrochure(input.inboundText)) {
       try {
         attachBrochure = await this.resolveBrochureToAttach(
           input.inboundText,

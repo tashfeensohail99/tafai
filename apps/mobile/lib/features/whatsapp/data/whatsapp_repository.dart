@@ -7,6 +7,7 @@ import '../../../core/errors/error_mapper.dart';
 import '../domain/wa_message.dart';
 import '../domain/wa_quick_reply.dart';
 import '../domain/wa_stats.dart';
+import '../domain/wa_summary.dart';
 import '../domain/wa_template.dart';
 import '../domain/wa_thread.dart';
 
@@ -136,6 +137,24 @@ class WhatsappRepository {
     try {
       final res = await _c.get<Map<String, dynamic>>('/whatsapp/threads/$id');
       return WhatsappThread.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:id/summary — on-demand AI recap of this chat:
+  /// a short summary, a suggested next step and a ready-to-send draft reply
+  /// (mirrors the web "Summary & suggested reply" panel). `refresh:true` forces
+  /// a regenerate instead of returning the server-side cached result. The JWT
+  /// is attached automatically by the shared Dio client.
+  Future<ThreadSummary> summarizeThread(String threadId,
+      {bool refresh = false}) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/summary',
+        data: {if (refresh) 'refresh': true},
+      );
+      return ThreadSummary.fromJson(res.data ?? const {});
     } on DioException catch (e) {
       throw mapDioError(e);
     }

@@ -4672,6 +4672,16 @@ model WhatsAppThread {
   // each turn so the next turn knows where we are in the funnel.
   aiState      String    @default("INITIAL")
 
+  // --- On-demand "Summary & Suggested reply" cache -------------------------
+  // The rep-facing brief (summary / suggested next step / draft reply +
+  // detected language) the chat panel generates on demand via gpt-4o-mini.
+  // Cached here keyed on the newest message id at generation time so
+  // re-opening a thread reuses it (no re-bill) until the conversation moves
+  // on or the rep hits Regenerate. NULL = never generated.
+  aiSummary                 Json?
+  aiSummaryThroughMessageId String?
+  aiSummaryAt               DateTime?
+
   // --- Outbound call permission (Meta business-initiated calls) ------------
   // A business-initiated call requires the user to have granted call permission
   // first — an inbound call from them does NOT count. This is a best-effort

@@ -86,10 +86,12 @@ import {
   sendMediaMessage,
   sendReaction,
   sendText,
+  fetchThreadSummary,
   type AdReferral,
   type ChatMessage,
   type ThreadDetail,
   type ThreadListItem,
+  type ThreadSummary,
   type WhatsAppMessageStatus,
 } from '@/lib/whatsapp';
 import { ConvertToClientModal } from './ConvertToClientModal';
@@ -182,6 +184,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, readOnly, onConvert
   const [templateOpen, setTemplateOpen] = useState(false);
   const [quickRepliesOpen, setQuickRepliesOpen] = useState(false);
   const [editLeadOpen, setEditLeadOpen] = useState(false);
+  // AI "Summary & Suggested reply" drawer — opened on demand from the chat
+  // header. The panel fetches lazily when opened (never on mount), so no AI
+  // call happens until the rep asks for it.
+  const [summaryOpen, setSummaryOpen] = useState(false);
   // Fullscreen image viewer ("lightbox"). Holds the blob URL of the image
   // the user just clicked; null = closed. Escape / click-backdrop closes.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -1108,6 +1114,8 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, readOnly, onConvert
           assignedTo={thread.lead?.assignedEmployee ?? null}
           csvBatchName={thread.lead?.importRows?.[0]?.batch.name ?? null}
           onBack={onBack}
+          summaryOpen={summaryOpen}
+          onToggleSummary={() => setSummaryOpen((v) => !v)}
         />
         {/* AI bot strip — per-thread on/off toggle + any bot-captured
             appointment-request banners. Self-contained: fetches its own
@@ -1516,6 +1524,20 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, readOnly, onConvert
           </div>
         ) : null}
 
+        {/* AI summary & suggested-reply drawer — on-demand, sits just above the
+            composer. Shown in readOnly too (Copy still works; "Use in reply"
+            hides there). Mounted only when open, so the fetch is lazy. */}
+        {summaryOpen ? (
+          <ThreadSummaryPanel
+            threadId={thread.id}
+            readOnly={readOnly}
+            onClose={() => setSummaryOpen(false)}
+            onUseInReply={(text) => {
+              setDraft(text);
+              setSummaryOpen(false);
+            }}
+          />
+        ) : null}
         {readOnly ? null : (
           <>
             <WindowStatusBanner withinWindow={withinWindow} windowExpiresAt={thread?.windowExpiresAt ?? null} />
@@ -2372,6 +2394,245 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]!;
 }
 
+// ---- AI summary & suggested-reply drawer --------------------------------
+
+/** Short "updated 5m ago" style relative time for the cached-summary line. */
+function summaryUpdatedAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Collapsible AI drawer mounted just above the composer. Fetches lazily when
+ * it opens (the chat panel never pre-fetches), shows the three labelled
+ * sections — Summary, Suggested next step, Draft reply — plus loading / error
+ * states, a Regenerate button (forces refresh), and an "updated … ago" line
+ * when the result came from the server cache.
+ *
+ * Draft reply always offers Copy (navigator.clipboard). "Use in reply" drops
+ * the draft straight into THIS panel's composer via onUseInReply — wired only
+ * because the composer value lives in the parent's own state; it is hidden in
+ * readOnly mode (no send affordance there), where Copy still works.
+ */
+function ThreadSummaryPanel({
+  threadId,
+  readOnly,
+  onClose,
+  onUseInReply,
+}: {
+  threadId: string;
+  readOnly?: boolean;
+  onClose: () => void;
+  onUseInReply: (text: string) => void;
+}) {
+  const [data, setData] = useState<ThreadSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const run = useCallback(
+    async (refresh: boolean) => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const res = await fetchThreadSummary(threadId, { refresh });
+        setData(res);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : 'Could not generate a summary, please try again.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [threadId],
+  );
+
+  // On-demand: fetch once when the drawer opens (it is only mounted after the
+  // rep clicks Summary). Subsequent opens reuse the server-side cache.
+  useEffect(() => {
+    void run(false);
+  }, [run]);
+
+  const copyDraft = async () => {
+    const text = data?.draftReply?.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (permissions / insecure context) — no-op.
+    }
+  };
+
+  const labelStyle: CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    color: 'var(--sos-text-muted)',
+  };
+  const bodyTextStyle: CSSProperties = {
+    fontSize: 13,
+    lineHeight: 1.5,
+    color: 'var(--sos-text-primary)',
+    whiteSpace: 'pre-wrap',
+  };
+
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        maxHeight: '45%',
+        overflowY: 'auto',
+        padding: '12px 16px',
+        background: 'var(--wa-panel-header)',
+        borderTop: '1px solid var(--sos-border-subtle)',
+      }}
+    >
+      {/* Drawer header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <Sparkles size={15} style={{ color: 'var(--sos-brand-primary)' }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+          AI summary &amp; suggested reply
+        </span>
+        {data && !data.empty && data.generatedAt ? (
+          <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+            {data.cached ? `updated ${summaryUpdatedAgo(data.generatedAt)}` : 'just now'}
+          </span>
+        ) : null}
+        <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => void run(true)}
+            disabled={loading}
+            title="Regenerate"
+            className="sos-btn sos-btn--sm sos-btn--secondary"
+            style={{ gap: 5 }}
+          >
+            <RotateCcw size={12} className={loading ? 'sos-spin' : undefined} />
+            Regenerate
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close summary"
+            title="Close"
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              padding: 4,
+              color: 'var(--sos-text-muted)',
+              display: 'inline-flex',
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+
+      {loading && !data ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13,
+            color: 'var(--sos-text-muted)',
+            padding: '8px 0',
+          }}
+        >
+          <Loader2 size={14} className="sos-spin" />
+          Reading the conversation…
+        </div>
+      ) : err ? (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12.5,
+            color: 'var(--sos-status-danger)',
+            background: 'var(--sos-status-danger-soft)',
+            border: '1px solid var(--sos-status-danger-border, rgba(229,62,62,0.35))',
+            borderRadius: 8,
+            padding: '8px 12px',
+          }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0 }}>{err}</span>
+          <button
+            type="button"
+            onClick={() => void run(true)}
+            className="sos-btn sos-btn--sm sos-btn--secondary"
+          >
+            Try again
+          </button>
+        </div>
+      ) : data?.empty ? (
+        <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', padding: '6px 0' }}>
+          No messages to summarize yet.
+        </div>
+      ) : data ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: loading ? 0.6 : 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={labelStyle}>Summary</span>
+            <div style={bodyTextStyle}>{data.summary || '—'}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={labelStyle}>Suggested next step</span>
+            <div style={bodyTextStyle}>{data.suggestion || '—'}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={labelStyle}>Draft reply</span>
+            <div
+              style={{
+                ...bodyTextStyle,
+                background: 'var(--sos-surface-0)',
+                border: '1px solid var(--sos-border-subtle)',
+                borderRadius: 8,
+                padding: '8px 10px',
+              }}
+            >
+              {data.draftReply || '—'}
+            </div>
+            {data.draftReply ? (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => void copyDraft()}
+                  className="sos-btn sos-btn--sm sos-btn--secondary"
+                  style={{ gap: 5 }}
+                >
+                  <Copy size={12} />
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => onUseInReply(data.draftReply)}
+                    className="sos-btn sos-btn--sm sos-btn--primary"
+                    style={{ gap: 5 }}
+                  >
+                    <Reply size={12} />
+                    Use in reply
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ChatHeader(props: {
   displayName: string;
   phone: string;
@@ -2384,6 +2645,10 @@ function ChatHeader(props: {
   assignedTo: { firstName: string; lastName: string } | null;
   csvBatchName: string | null;
   onBack?: () => void;
+  /** Toggle the AI summary & suggested-reply drawer. */
+  onToggleSummary?: () => void;
+  /** Whether the summary drawer is currently open (drives the button's active state). */
+  summaryOpen?: boolean;
 }) {
   return (
     <header
@@ -2453,7 +2718,29 @@ function ChatHeader(props: {
           )}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        {props.onToggleSummary ? (
+          <button
+            type="button"
+            onClick={props.onToggleSummary}
+            title="AI summary & suggested reply"
+            aria-pressed={props.summaryOpen ? true : false}
+            className="sos-btn sos-btn--sm sos-btn--secondary"
+            style={{
+              gap: 5,
+              ...(props.summaryOpen
+                ? {
+                    background: 'var(--sos-brand-primary-soft)',
+                    borderColor: 'var(--sos-brand-primary-border)',
+                    color: 'var(--sos-brand-primary)',
+                  }
+                : {}),
+            }}
+          >
+            <Sparkles size={13} />
+            Summary
+          </button>
+        ) : null}
         {props.slaDeadlineAt && !props.firstAgentReplyAt && (
           <span
             style={{

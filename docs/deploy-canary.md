@@ -1,0 +1,1 @@
+Deploy canary — opened to verify the Railway build/deploy pipeline during incident QH8L8B3E on 2026-10-22T11:25:01Z. Merging this redeploys main HEAD, which already contains PR #469 (bot: Peshawar event + stop auto-brochures) and PR #470 (WhatsApp chat summary). Safe to delete after a successful deploy.

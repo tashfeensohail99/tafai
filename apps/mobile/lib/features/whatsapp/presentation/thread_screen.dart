@@ -22,6 +22,7 @@ import '../../leads/presentation/lead_detail_screen.dart';
 import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
 import '../domain/wa_message.dart';
+import '../domain/wa_summary.dart';
 import '../domain/wa_thread.dart';
 import 'disposition_sheet.dart';
 import 'media_preview_screen.dart';
@@ -1031,6 +1032,30 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     }
   }
 
+  /// Open the on-demand AI "Summary & suggested reply" sheet. The sheet fetches
+  /// lazily when it appears (never on chat build); "Use in reply" drops the
+  /// draft straight into THIS screen's composer via [_composer] and closes.
+  void _openSummary() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: isDark ? AppTokens.waHeaderDark : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: AppTokens.radiusLg),
+      ),
+      builder: (_) => _ThreadSummarySheet(
+        threadId: _threadId,
+        onUseInReply: (text) {
+          _composer.text = text;
+          _composer.selection =
+              TextSelection.collapsed(offset: _composer.text.length);
+        },
+      ),
+    );
+  }
+
   void _toast(String msg) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -1146,6 +1171,13 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           ],
         ),
         actions: [
+          // On-demand AI "Summary & suggested reply" — opens a bottom sheet
+          // that lazily summarises this chat (mirrors the web Summary panel).
+          IconButton(
+            tooltip: 'AI summary & suggested reply',
+            icon: const Icon(Icons.auto_awesome, color: Colors.white),
+            onPressed: _openSummary,
+          ),
           // Single context-aware control: until the customer grants WhatsApp-
           // call permission this requests it; once granted it becomes the real
           // Call button. (Replaces the old always-on call icon + the overflow
@@ -2656,6 +2688,302 @@ class _ThreadLoaderScreenState extends ConsumerState<ThreadLoaderScreen> {
                 ],
               ),
       ),
+    );
+  }
+}
+
+/// On-demand "AI summary & suggested reply" bottom sheet — mirrors the web
+/// Summary drawer. Fetches lazily when it opens (never pre-fetched on the chat
+/// build), shows three labelled sections (Summary / Suggested next step / Draft
+/// reply), a Regenerate control (forces a server refresh), an "updated … ago"
+/// line when the result came from the cache, plus the loading / error / empty
+/// states. The draft offers Copy (Clipboard) and "Use in reply" (drops it into
+/// the chat composer via [onUseInReply] and closes the sheet).
+class _ThreadSummarySheet extends ConsumerStatefulWidget {
+  const _ThreadSummarySheet({
+    required this.threadId,
+    required this.onUseInReply,
+  });
+
+  final String threadId;
+  final ValueChanged<String> onUseInReply;
+
+  @override
+  ConsumerState<_ThreadSummarySheet> createState() =>
+      _ThreadSummarySheetState();
+}
+
+class _ThreadSummarySheetState extends ConsumerState<_ThreadSummarySheet> {
+  ThreadSummary? _data;
+  bool _loading = false;
+  Object? _error;
+  bool _copied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Lazy: the request fires only now that the sheet is open — the chat screen
+    // itself never pre-fetches a summary.
+    _run(refresh: false);
+  }
+
+  Future<void> _run({required bool refresh}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await ref
+          .read(whatsappRepositoryProvider)
+          .summarizeThread(widget.threadId, refresh: refresh);
+      if (!mounted) return;
+      setState(() {
+        _data = res;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _copyDraft(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final muted = isDark ? AppTokens.textMutedDark : AppTokens.textMutedLight;
+    final data = _data;
+    // "updated 5m ago" for cached results, "just now" for a fresh generate.
+    final String? agoLine =
+        (data != null && !data.empty && data.generatedAt != null)
+            ? (data.cached ? 'updated ${relativeTime(data.generatedAt!)}' : 'just now')
+            : null;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.75,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header: title + "updated … ago", Regenerate, close.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppTokens.space4,
+                    AppTokens.space1, AppTokens.space2, AppTokens.space2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.auto_awesome,
+                        size: 18, color: AppTokens.primary600),
+                    const SizedBox(width: AppTokens.space2),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'AI summary & suggested reply',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                          if (agoLine != null)
+                            Text(agoLine,
+                                style: TextStyle(fontSize: 11, color: muted)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Regenerate',
+                      visualDensity: VisualDensity.compact,
+                      icon: _loading
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.refresh),
+                      onPressed: _loading ? null : () => _run(refresh: true),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(AppTokens.space4,
+                      AppTokens.space3, AppTokens.space4, AppTokens.space4),
+                  child: _body(isDark, muted),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _body(bool isDark, Color muted) {
+    final data = _data;
+    // First open — spinner only, nothing to show yet.
+    if (_loading && data == null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: AppTokens.space3),
+          Text('Reading the conversation…', style: TextStyle(color: muted)),
+        ],
+      );
+    }
+    if (_error != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 18, color: AppTokens.statusDanger),
+              const SizedBox(width: AppTokens.space2),
+              Expanded(
+                child: Text(
+                  messageForError(_error!),
+                  style: const TextStyle(color: AppTokens.statusDanger),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTokens.space3),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: () => _run(refresh: true),
+              child: const Text('Try again'),
+            ),
+          ),
+        ],
+      );
+    }
+    if (data == null) return const SizedBox.shrink();
+    if (data.empty) {
+      return Text('No messages to summarise yet.',
+          style: TextStyle(color: muted, fontSize: 13.5));
+    }
+    // Dim while a regenerate is in flight (keeps the previous result readable).
+    return Opacity(
+      opacity: _loading ? 0.6 : 1,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _section('Summary', data.summary, muted),
+          const SizedBox(height: AppTokens.space4),
+          _section('Suggested next step', data.suggestion, muted),
+          const SizedBox(height: AppTokens.space4),
+          _draftSection(data.draftReply, isDark, muted),
+        ],
+      ),
+    );
+  }
+
+  Widget _section(String label, String value, Color muted) {
+    final text = value.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+            color: muted,
+          ),
+        ),
+        const SizedBox(height: AppTokens.space1),
+        Text(text.isEmpty ? '—' : text,
+            style: const TextStyle(fontSize: 13.5, height: 1.5)),
+      ],
+    );
+  }
+
+  Widget _draftSection(String draft, bool isDark, Color muted) {
+    final text = draft.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DRAFT REPLY',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+            color: muted,
+          ),
+        ),
+        const SizedBox(height: AppTokens.space1),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(AppTokens.space3),
+          decoration: BoxDecoration(
+            color: isDark
+                ? AppTokens.surfaceMutedDark
+                : AppTokens.surfaceSubtleLight,
+            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
+            border: Border.all(
+                color: isDark ? AppTokens.borderDark : AppTokens.borderLight),
+          ),
+          child: Text(text.isEmpty ? '—' : text,
+              style: const TextStyle(fontSize: 13.5, height: 1.5)),
+        ),
+        if (text.isNotEmpty) ...[
+          const SizedBox(height: AppTokens.space2),
+          Row(
+            children: [
+              // Copy is text-only: the tree-shaken icon font in the shipped
+              // build has no copy-shaped glyph, and this must stay OTA-patchable.
+              OutlinedButton(
+                onPressed: () => _copyDraft(text),
+                child: Text(_copied ? 'Copied' : 'Copy'),
+              ),
+              const SizedBox(width: AppTokens.space2),
+              FilledButton.icon(
+                onPressed: () {
+                  widget.onUseInReply(text);
+                  Navigator.of(context).pop();
+                },
+                icon: const Icon(Icons.reply, size: 16),
+                label: const Text('Use in reply'),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

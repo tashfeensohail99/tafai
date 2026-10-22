@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import type { Route } from 'next';
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  X,
   CheckCircle2,
   Coins,
   Download,
@@ -114,6 +118,7 @@ const label = (s: string) => s.replace(/_/g, ' ').toLowerCase();
 
 const th: CSSProperties = { textAlign: 'left', padding: '9px 14px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--sos-text-faint)', borderBottom: '1px solid var(--sos-border-subtle)', whiteSpace: 'nowrap' };
 const td: CSSProperties = { padding: '10px 14px', fontSize: 13, color: 'var(--sos-text-secondary)', borderBottom: '1px solid var(--sos-border-subtle)' };
+const reorderBtnStyle: CSSProperties = { flex: '0 0 auto', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, padding: 4, cursor: 'pointer', color: 'var(--sos-text-muted)', display: 'inline-flex', alignItems: 'center' };
 
 /**
  * One-click "Send consultation reminder" button on the Finance WhatsApp tab.
@@ -193,6 +198,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const payFileRef = useRef<HTMLInputElement>(null);
+  // Signed-agreement pages staged for upload. A client often sends the signed
+  // copy as several photos/pages one at a time; we accumulate + reorder them
+  // here, then the backend merges them into a single PDF on upload.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   // Record-payment form (Payments tab)
   const [fxRates, setFxRates] = useState<Record<string, number>>({});
@@ -275,17 +284,36 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   };
 
-  const handleUpload = async (file: File) => {
+  const addPendingFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setPendingFiles((prev) => [...prev, ...Array.from(list)]);
+  };
+  const movePending = (i: number, dir: -1 | 1) => {
+    setPendingFiles((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+  const removePending = (i: number) => setPendingFiles((prev) => prev.filter((_, k) => k !== i));
+
+  const handleUpload = async (files: File[]) => {
     // Keyed by **agreement** id, not contract id — the ServiceContract +
     // Installments only get materialised the moment the signed copy lands
     // (per the finance team's rule: no ledger before signing).
     const activeAg = data?.agreements?.[programIdx]?.agreement ?? data?.agreement;
     if (!activeAg) { setError('No agreement yet — Sales needs to draft one first.'); return; }
+    if (files.length === 0) return;
     setBusy('upload');
     setError(null);
     try {
-      await uploadSignedAgreement(activeAg.id, file);
-      setNotice('Signed agreement uploaded — ledger materialised; agreement marked signed.');
+      await uploadSignedAgreement(activeAg.id, files);
+      setNotice(files.length > 1
+        ? `Signed agreement uploaded — ${files.length} pages merged into one PDF; ledger materialised; agreement marked signed.`
+        : 'Signed agreement uploaded — ledger materialised; agreement marked signed.');
+      setPendingFiles([]);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -812,18 +840,49 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                   </div>
                 ) : ['APPROVED', 'SENT', 'SIGNED'].includes(agreement.status) ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span className="sos-text-muted" style={{ fontSize: 13 }}>No signed copy yet. Uploading it creates the ledger and marks the agreement signed.</span>
-                    <PrimaryButton size="sm" iconLeft={busy === 'upload' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />} onClick={() => fileRef.current?.click()} disabled={busy !== null}>{busy === 'upload' ? 'Uploading…' : 'Upload signed agreement'}</PrimaryButton>
+                    <span className="sos-text-muted" style={{ fontSize: 13 }}>No signed copy yet. Add the signed page(s) — several photos or pages merge into one PDF. Uploading creates the ledger and marks the agreement signed.</span>
+                    <SecondaryButton size="sm" iconLeft={<Upload size={14} />} onClick={() => fileRef.current?.click()} disabled={busy !== null}>Add pages…</SecondaryButton>
                   </div>
                 ) : (
                   <div className="sos-text-muted" style={{ fontSize: 13 }}>Available once Finance approves the agreement.</div>
                 )}
+
+                {pendingFiles.length > 0 ? (
+                  <div style={{ marginTop: 12, border: '1px solid var(--sos-border-subtle)', borderRadius: 10, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
+                      <span className="sos-text" style={{ fontSize: 13, fontWeight: 600 }}>
+                        {pendingFiles.length === 1 ? '1 file to upload' : `${pendingFiles.length} pages → merged into 1 PDF`}
+                      </span>
+                      <SecondaryButton size="sm" iconLeft={<Plus size={14} />} onClick={() => fileRef.current?.click()} disabled={busy !== null}>Add more</SecondaryButton>
+                    </div>
+                    <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {pendingFiles.map((f, i) => (
+                        <li key={`${f.name}-${f.size}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                          <span className="sos-text-faint" style={{ width: 22, textAlign: 'right' }}>{i + 1}.</span>
+                          <span className="sos-text" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                          <span className="sos-text-faint" style={{ flex: '0 0 auto' }}>{(f.size / 1024).toFixed(0)} KB</span>
+                          <button type="button" title="Move up" aria-label="Move up" disabled={i === 0 || busy !== null} onClick={() => movePending(i, -1)} style={reorderBtnStyle}><ChevronUp size={14} /></button>
+                          <button type="button" title="Move down" aria-label="Move down" disabled={i === pendingFiles.length - 1 || busy !== null} onClick={() => movePending(i, 1)} style={reorderBtnStyle}><ChevronDown size={14} /></button>
+                          <button type="button" title="Remove" aria-label="Remove" disabled={busy !== null} onClick={() => removePending(i)} style={reorderBtnStyle}><X size={14} /></button>
+                        </li>
+                      ))}
+                    </ol>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                      <PrimaryButton size="sm" iconLeft={busy === 'upload' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />} onClick={() => void handleUpload(pendingFiles)} disabled={busy !== null}>
+                        {busy === 'upload' ? 'Uploading…' : pendingFiles.length > 1 ? 'Merge & upload' : 'Upload signed agreement'}
+                      </PrimaryButton>
+                      <SecondaryButton size="sm" onClick={() => setPendingFiles([])} disabled={busy !== null}>Clear</SecondaryButton>
+                    </div>
+                  </div>
+                ) : null}
+
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="application/pdf,image/png,image/jpeg,image/webp"
+                  multiple
+                  accept="application/pdf,image/jpeg,image/png"
                   style={{ display: 'none' }}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleUpload(f); }}
+                  onChange={(e) => { addPendingFiles(e.target.files); if (fileRef.current) fileRef.current.value = ''; }}
                 />
               </div>
             </>

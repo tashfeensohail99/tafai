@@ -9,11 +9,11 @@ import {
   Patch,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -325,18 +325,18 @@ export class AgreementsController {
   @Post(':id/upload-signed')
   @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
   @UseInterceptors(
-    FileInterceptor('file', {
+    AnyFilesInterceptor({
       storage: memoryStorage(),
-      limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+      limits: { fileSize: 20 * 1024 * 1024, files: 20 }, // 20 MB/file, up to 20 pages
     }),
   )
   uploadSigned(
     @Param('id', ParseUUIDPipe) id: string,
-    @UploadedFile() file: Express.Multer.File | undefined,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    if (!file) throw new BadRequestException('Signed agreement file is required');
-    return this.agreements.uploadSignedAgreement(id, file, user.id);
+    if (!files?.length) throw new BadRequestException('Signed agreement file is required');
+    return this.agreements.uploadSignedAgreement(id, files, user.id);
   }
 
   @Get(':id/pdf-url')

@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
+import { resolveSignedUpload, type UploadedFileLike } from '../../common/pdf/merge-to-pdf';
 import {
   AddInstallmentsDto,
   CreateServiceContractDto,
@@ -37,13 +38,6 @@ const LEAD_CONTACT_SELECT = {
   ...CONTACT_SELECT,
   assignedEmployee: { select: { firstName: true, lastName: true, pbxExtension: true } },
 } as const;
-
-const ALLOWED_AGREEMENT_MIME_TYPES = new Set([
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-]);
 
 @Injectable()
 export class ServiceContractsService {
@@ -211,20 +205,14 @@ export class ServiceContractsService {
    */
   async uploadAgreement(
     input: UploadAgreementDto,
-    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    files: UploadedFileLike[],
     actorUserId: string,
   ) {
     if (!input.leadId && !input.clientId) {
       throw new BadRequestException('Either leadId or clientId is required');
     }
-    if (!file?.buffer || file.buffer.length === 0) {
-      throw new BadRequestException('Agreement file is required');
-    }
-    if (!ALLOWED_AGREEMENT_MIME_TYPES.has(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
-      );
-    }
+    // One file is stored as-is; multiple pages/images are merged into one PDF.
+    const file = await resolveSignedUpload(files);
 
     if (input.leadId) {
       const lead = await this.prisma.lead.findFirst({
@@ -319,17 +307,11 @@ export class ServiceContractsService {
    */
   async uploadSignedToContract(
     contractId: string,
-    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    files: UploadedFileLike[],
     _actorUserId: string,
   ) {
-    if (!file?.buffer || file.buffer.length === 0) {
-      throw new BadRequestException('Signed agreement file is required');
-    }
-    if (!ALLOWED_AGREEMENT_MIME_TYPES.has(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
-      );
-    }
+    // One file stored as-is; multiple pages/images merged into one PDF.
+    const file = await resolveSignedUpload(files);
     const contract = await this.prisma.serviceContract.findFirst({
       where: { id: contractId, deletedAt: null },
       select: { id: true, status: true, signedDate: true },

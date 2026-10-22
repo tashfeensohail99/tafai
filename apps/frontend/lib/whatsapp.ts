@@ -766,6 +766,46 @@ export function takeOverThread(threadId: string): Promise<ThreadAiState> {
 }
 
 /**
+ * AI "Summary & Suggested reply" for a chat — a short brief, one recommended
+ * next step, and a ready-to-edit draft reply in the client's language. Cached
+ * server-side keyed on the thread's newest message, so re-opening a quiet chat
+ * returns the cached brief (`cached: true`) without re-billing. `empty: true`
+ * means the thread has no messages yet (no AI call was made).
+ */
+export interface ThreadSummary {
+  summary: string;
+  suggestion: string;
+  draftReply: string;
+  language: 'en' | 'ur_roman';
+  /** How many messages were considered (newest ~40). */
+  messageCount: number;
+  /** ISO timestamp of when this summary was generated; null when empty. */
+  generatedAt: string | null;
+  /** Newest message id the summary covers; null when empty. */
+  throughMessageId: string | null;
+  /** True when served from the server cache (no fresh generation this call). */
+  cached: boolean;
+  /** True only for a thread with no messages. */
+  empty?: boolean;
+}
+
+/**
+ * Generate (or fetch the cached) AI summary + suggested reply for a thread.
+ * On-demand only — called when the rep opens the Summary panel or hits
+ * Regenerate (`refresh: true`). Permission: same as reading the thread
+ * (whatsapp.view_inbox / view_all_inboxes).
+ */
+export function fetchThreadSummary(
+  threadId: string,
+  opts: { refresh?: boolean } = {},
+): Promise<ThreadSummary> {
+  return apiFetch<ThreadSummary>(`/whatsapp/threads/${threadId}/summary`, {
+    method: 'POST',
+    body: JSON.stringify({ refresh: !!opts.refresh }),
+  });
+}
+
+/**
  * Upload and send a media message (voice note, image, video, document).
  * Uses multipart/form-data; `apiFetch` is bypassed because we need raw FormData.
  */

@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Coins,
   Download,
+  Eye,
   FileSignature,
   FileText,
   Loader2,
@@ -404,6 +405,26 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   };
   const closeVerify = () => { setVerifyId(null); setVerifyDetail(null); setVerifyNote(''); };
+
+  // Re-open the client's uploaded payment proof from any submission row
+  // (incl. already-verified ones) — fetches a fresh signed URL each time so
+  // the link never goes stale, and opens it in a new tab.
+  const openReceipt = async (id: string) => {
+    setBusy(`receipt:${id}`);
+    setError(null);
+    try {
+      const h = await fetchHandoverById(id);
+      if (h.receiptDownloadUrl) {
+        window.open(h.receiptDownloadUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        setError('No receipt file is attached to this submission.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open the receipt');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const doVerify = async () => {
     const h = verifyDetail;
@@ -1112,7 +1133,22 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                         : <PrimaryButton key="a" size="sm" onClick={() => void openVerify(h.id)} disabled={busy !== null}>Review &amp; verify</PrimaryButton>;
                 return [
                   money(h.amount, h.currency),
-                  h.receiptFileName ?? '—',
+                  h.receiptFileName
+                    ? (
+                      <button
+                        key="r"
+                        type="button"
+                        className="sos-text-link"
+                        onClick={() => void openReceipt(h.id)}
+                        disabled={busy !== null}
+                        title="View the uploaded receipt"
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: busy !== null ? 'wait' : 'pointer', font: 'inherit', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
+                        <Eye size={13} style={{ flex: '0 0 auto' }} />
+                        {busy === `receipt:${h.id}` ? 'Opening…' : h.receiptFileName}
+                      </button>
+                    )
+                    : '—',
                   <StatusBadge key="s" tone={tone(h.status)} size="sm" dot={false}>{label(h.status)}</StatusBadge>,
                   fmtDate(h.submittedAt),
                   action,

@@ -1,3 +1,5 @@
+import { WEBSITE_WHATSAPP_SOURCE } from '../website-ref';
+
 /**
  * Per-rep DAILY new-lead cap. An admin can wind a rep down to at most N fresh
  * ONLINE round-robin leads per day (e.g. easing someone back in after a pause)
@@ -18,8 +20,10 @@
 
 /** The lead sourceChannel values that count as "online round-robin" — the only
  *  leads the daily cap throttles and counts. Inbound WhatsApp AND Click-to-
- *  WhatsApp ads both land as 'whatsapp'; Messenger ad chats as 'messenger'. */
-export const ONLINE_ROUND_ROBIN_SOURCE_CHANNELS = ['whatsapp', 'messenger'] as const;
+ *  WhatsApp ads both land as 'whatsapp'; chats started from the website's
+ *  WhatsApp buttons as 'whatsapp-website' (same live engine, see website-ref);
+ *  Messenger ad chats as 'messenger'. */
+export const ONLINE_ROUND_ROBIN_SOURCE_CHANNELS = ['whatsapp', WEBSITE_WHATSAPP_SOURCE, 'messenger'] as const;
 
 /**
  * Pakistan Standard Time is a fixed UTC+5 (no DST since 2009). Returns the UTC

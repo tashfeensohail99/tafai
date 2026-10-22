@@ -18,6 +18,7 @@ import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
 import { findClientByNormalizedPhone } from '../../../../common/phone/client-dedupe';
+import { inboundWhatsAppLeadAttribution } from '../../../../common/website-ref';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
@@ -135,7 +136,9 @@ const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000;
  *   2. Resolve the customer:
  *        a. Existing Client by phone? (already converted — chat continues)
  *        b. Existing Lead by phone?  (active sales prospect — continue)
- *        c. Neither?                 → create a new Lead (sourceChannel=whatsapp)
+ *        c. Neither?                 → create a new Lead (sourceChannel=whatsapp,
+ *                                      or whatsapp-website when the first message
+ *                                      carries the marketing site's [Ref: …] token)
  *   3. Upsert the WhatsAppThread (24h window timestamp, lastMessage*, unread++).
  *   4. Dedupe-write the WhatsAppMessage (waMessageId is uniq).
  *   5. Record ActivityTimeline event WHATSAPP_MESSAGE_RECEIVED on the Lead/Client.
@@ -1088,7 +1091,11 @@ export class WebhookIngestProcessor extends WorkerHost {
               firstName,
               lastName,
               phone,
-              sourceChannel: 'whatsapp',
+              // 'whatsapp' — or, when the first message carries the marketing
+              // site's [Ref: …] token, 'whatsapp-website' plus the service the
+              // button was for and a note with the ref. Only on CREATE: an
+              // existing lead/client keeps its source and owner untouched.
+              ...inboundWhatsAppLeadAttribution(msg.text?.body),
               status: LeadStatus.NEW,
               ...(branch ? { branchId: branch.id } : {}),
             },

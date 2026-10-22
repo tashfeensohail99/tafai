@@ -72,6 +72,6 @@ describe('cappedOutEmployeeIds', () => {
     const db = fakeDb([{ assignedEmployeeId: 'b', _count: 7 }]);
     await cappedOutEmployeeIds(db, [{ id: 'b', dailyLeadCap: 7 }]);
     const where = db.lead.groupBy.mock.calls[0][0].where;
-    expect(where.sourceChannel).toEqual({ in: ['whatsapp', 'messenger'] });
+    expect(where.sourceChannel).toEqual({ in: ['whatsapp', 'whatsapp-website', 'messenger'] });
   });
 });

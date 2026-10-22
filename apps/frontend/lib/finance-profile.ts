@@ -191,9 +191,10 @@ export function fetchFinanceCustomers(search?: string): Promise<FinanceCustomerR
  * ledger yet. The backend handles both first upload (creates contract +
  * installments) and re-uploads (updates an already-signed contract).
  */
-export async function uploadSignedAgreement(agreementId: string, file: File): Promise<void> {
+export async function uploadSignedAgreement(agreementId: string, files: File[]): Promise<void> {
   const fd = new FormData();
-  fd.append('file', file);
+  // One file is stored as-is; multiple pages are merged (in this order) into one PDF.
+  for (const f of files) fd.append('files', f);
   await apiFetch(`/agreements/${agreementId}/upload-signed`, {
     method: 'POST',
     body: fd,

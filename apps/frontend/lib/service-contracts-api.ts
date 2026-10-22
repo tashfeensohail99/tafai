@@ -135,12 +135,13 @@ export async function generateInvoiceForInstallment(installmentId: string): Prom
 
 export async function uploadServiceAgreement(
   input: UploadAgreementInput,
-  file: File,
+  files: File[],
 ): Promise<ApiServiceContract> {
   const token = getAccessToken();
   const base = process.env.NEXT_PUBLIC_API_URL ?? 'https://backend-production-5a89.up.railway.app';
   const form = new FormData();
-  form.append('file', file);
+  // One file is stored as-is; multiple pages are merged (in this order) into one PDF.
+  for (const f of files) form.append('files', f);
   if (input.leadId) form.append('leadId', input.leadId);
   if (input.clientId) form.append('clientId', input.clientId);
   form.append('totalAmount', String(input.totalAmount));

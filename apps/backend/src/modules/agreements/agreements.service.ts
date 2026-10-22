@@ -22,6 +22,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
+import { resolveSignedUpload, type UploadedFileLike } from '../../common/pdf/merge-to-pdf';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import {
   looksLikePhoneSearch,
@@ -659,24 +660,12 @@ export class AgreementsService {
    */
   async uploadSignedAgreement(
     agreementId: string,
-    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    files: UploadedFileLike[],
     userId: string,
   ) {
-    if (!file?.buffer || file.buffer.length === 0) {
-      throw new BadRequestException('Signed agreement file is required');
-    }
-    const allowedMime = new Set([
-      'application/pdf',
-      'image/png',
-      'image/jpeg',
-      'image/jpg',
-      'image/webp',
-    ]);
-    if (!allowedMime.has(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
-      );
-    }
+    // A client's signed copy may arrive as several photos / pages. One file is
+    // stored as-is; multiple are merged (in order) into a single PDF.
+    const file = await resolveSignedUpload(files);
 
     const a = await this.prisma.agreement.findFirst({ where: { id: agreementId, deletedAt: null } });
     if (!a) throw new NotFoundException('Agreement not found');

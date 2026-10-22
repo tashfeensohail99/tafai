@@ -5,6 +5,9 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Plus,
   Clock,
   Download,
   FileSignature,
@@ -61,7 +64,9 @@ export function LeadServiceAgreementSection({
   const [success, setSuccess] = useState<string | null>(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
+  // Signed agreement pages. A client may send several photos/pages; they merge
+  // (in this order) into one PDF server-side on upload.
+  const [files, setFiles] = useState<File[]>([]);
   const [totalAmount, setTotalAmount] = useState(defaultTotalAmount ?? '');
   const [currency, setCurrency] = useState(defaultCurrency ?? 'CAD');
   const [signedDate, setSignedDate] = useState('');
@@ -93,7 +98,7 @@ export function LeadServiceAgreementSection({
   }, [success]);
 
   function resetForm() {
-    setFile(null);
+    setFiles([]);
     setTotalAmount(defaultTotalAmount ?? '');
     setCurrency(defaultCurrency ?? 'CAD');
     setSignedDate('');
@@ -111,7 +116,7 @@ export function LeadServiceAgreementSection({
     setError(null);
     setSubmitting(true);
     try {
-      if (!file) throw new Error('Pick a PDF or image of the signed agreement.');
+      if (files.length === 0) throw new Error('Add at least one PDF or image of the signed agreement.');
       const totalNum = Number(totalAmount);
       if (!isFinite(totalNum) || totalNum <= 0) {
         throw new Error('Total amount must be a positive number.');
@@ -124,9 +129,11 @@ export function LeadServiceAgreementSection({
           signedDate: signedDate || undefined,
           notes: notes.trim() || undefined,
         },
-        file,
+        files,
       );
-      setSuccess('Agreement uploaded. Finance will set the installment schedule.');
+      setSuccess(files.length > 1
+        ? `Agreement uploaded — ${files.length} pages merged into one PDF. Finance will set the installment schedule.`
+        : 'Agreement uploaded. Finance will set the installment schedule.');
       closeUpload();
       await load();
     } catch (err) {
@@ -214,15 +221,27 @@ export function LeadServiceAgreementSection({
             </span>
             <input
               type="file"
-              accept="application/pdf,image/png,image/jpeg,image/webp"
-              required
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              multiple
+              accept="application/pdf,image/jpeg,image/png"
+              onChange={(e) => { setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.currentTarget.value = ''; }}
               className="sos-input"
             />
-            {file ? (
-              <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
-                {file.name} · {(file.size / 1024).toFixed(0)} KB
-              </span>
+            <span style={{ fontSize: 12, color: 'var(--sos-text-faint)' }}>
+              Several photos or pages? Add them all (<Plus size={11} style={{ verticalAlign: 'middle' }} /> to add more) — they merge into one PDF in the order below.
+            </span>
+            {files.length > 0 ? (
+              <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {files.map((f, i) => (
+                  <li key={`${f.name}-${f.size}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                    <span style={{ width: 22, textAlign: 'right', color: 'var(--sos-text-faint)' }}>{i + 1}.</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    <span style={{ flex: '0 0 auto', color: 'var(--sos-text-faint)' }}>{(f.size / 1024).toFixed(0)} KB</span>
+                    <button type="button" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => setFiles((prev) => { const j = i - 1; if (j < 0) return prev; const n = [...prev]; [n[i], n[j]] = [n[j], n[i]]; return n; })} style={{ flex: '0 0 auto', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, padding: 4, cursor: 'pointer', color: 'var(--sos-text-muted)', display: 'inline-flex', alignItems: 'center' }}><ChevronUp size={14} /></button>
+                    <button type="button" title="Move down" aria-label="Move down" disabled={i === files.length - 1} onClick={() => setFiles((prev) => { const j = i + 1; if (j >= prev.length) return prev; const n = [...prev]; [n[i], n[j]] = [n[j], n[i]]; return n; })} style={{ flex: '0 0 auto', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, padding: 4, cursor: 'pointer', color: 'var(--sos-text-muted)', display: 'inline-flex', alignItems: 'center' }}><ChevronDown size={14} /></button>
+                    <button type="button" title="Remove" aria-label="Remove" onClick={() => setFiles((prev) => prev.filter((_, k) => k !== i))} style={{ flex: '0 0 auto', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, padding: 4, cursor: 'pointer', color: 'var(--sos-text-muted)', display: 'inline-flex', alignItems: 'center' }}><X size={14} /></button>
+                  </li>
+                ))}
+              </ol>
             ) : null}
           </label>
 

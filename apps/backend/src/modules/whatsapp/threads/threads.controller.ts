@@ -33,6 +33,7 @@ import { StorageService } from '../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WHATSAPP_QUEUE, type MediaDownloadJob, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppThreadsService } from './threads.service';
+import { ThreadSummaryService } from '../../ai/thread-summary.service';
 import { Audit } from '../../../common/decorators/audit.decorator';
 
 class ListThreadsDto {
@@ -233,6 +234,19 @@ class BlockThreadDto {
   reason?: string;
 }
 
+class SummarizeThreadDto {
+  /**
+   * Force a fresh gpt-4o-mini generation, bypassing the per-thread cache
+   * (the "Regenerate" button). Absent/false reuses the cached brief when the
+   * conversation hasn't moved on. Coerced from a JSON boolean or the string
+   * "true" (see the @Transform note on the list DTO above).
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  refresh?: boolean;
+}
+
 @Controller('whatsapp/threads')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class WhatsAppThreadsController {
@@ -241,6 +255,7 @@ export class WhatsAppThreadsController {
     private readonly prisma: PrismaService,
     private readonly metaFactory: WhatsAppMetaClientFactory,
     private readonly storage: StorageService,
+    private readonly summaries: ThreadSummaryService,
     @InjectQueue(WHATSAPP_QUEUE.MEDIA_DOWNLOAD)
     private readonly mediaQueue: Queue<MediaDownloadJob>,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
@@ -486,6 +501,30 @@ export class WhatsAppThreadsController {
       where: { threadId: id, status: 'PENDING' },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * On-demand AI "Summary & Suggested reply" for the chat. Returns a short
+   * summary, one recommended next action, and a ready-to-edit draft reply in
+   * the client's language (gpt-4o-mini via the existing OpenAiService). The
+   * result is cached on the thread keyed on the newest message id, so
+   * re-opening a quiet chat reuses it without re-billing; `refresh: true`
+   * forces a fresh generation.
+   *
+   * Scoped exactly like reading the thread: the SAME view guards + getOrFail,
+   * so only a user who can see this conversation can summarize it (403/404
+   * come from getOrFail for a not-visible / missing thread).
+   */
+  @Post(':id/summary')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async summary(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SummarizeThreadDto,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    await this.threads.getOrFail(caller, id);
+    return this.summaries.summarize(id, { refresh: !!dto.refresh });
   }
 
   /**

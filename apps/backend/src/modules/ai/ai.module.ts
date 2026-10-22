@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { OpenAiService } from './openai.service';
 import { KnowledgeService } from './knowledge.service';
 import { OrchestratorService } from './orchestrator.service';
+import { ThreadSummaryService } from './thread-summary.service';
 import { AiAdminController } from './ai-admin.controller';
 import { AiBacklogSweeperService } from './ai-backlog-sweeper.service';
 import { WhatsAppWindowKeeperService } from './window-keeper.service';
@@ -30,11 +31,12 @@ import { WhatsAppCallsModule } from '../whatsapp/calls/calls.module';
     OpenAiService,
     KnowledgeService,
     OrchestratorService,
+    ThreadSummaryService,
     AiBacklogSweeperService,
     WhatsAppWindowKeeperService,
     WhatsAppWindowSaverService,
     WhatsAppReengageBlastService,
   ],
-  exports: [OpenAiService, KnowledgeService, OrchestratorService],
+  exports: [OpenAiService, KnowledgeService, OrchestratorService, ThreadSummaryService],
 })
 export class AiModule {}

@@ -33,6 +33,7 @@ import { ActivityTimelineService } from '../activity-timeline/activity-timeline.
 import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
 import { CreateWebsiteLeadDto } from './public-lead.dto';
+import { WEBSITE_WHATSAPP_SOURCE } from '../../common/website-ref';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertConvertibleEmail } from './leads-conversion.util';
@@ -742,11 +743,14 @@ export class LeadsService {
     switch (source) {
       case 'FACEBOOK':
       case 'INSTAGRAM':
-      case 'WEBSITE':
       case 'WHATSAPP':
       case 'REFERRAL':
       case 'WALK_IN':
         return [ci([source])];
+      case 'WEBSITE':
+        // The form's 'WEBSITE' plus chats started from the site's WhatsApp
+        // buttons — mapSource buckets both as WEBSITE.
+        return [ci(['WEBSITE', WEBSITE_WHATSAPP_SOURCE])];
       case 'META_LEAD_FORM':
         return [ci(['META', 'META-LEAD-FORM', 'META_LEAD_FORM'])];
       case 'PHONE':
@@ -760,8 +764,8 @@ export class LeadsService {
               { sourceChannel: null },
               {
                 NOT: ci([
-                  'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'WHATSAPP', 'REFERRAL',
-                  'WALK_IN', 'META', 'META-LEAD-FORM', 'META_LEAD_FORM',
+                  'FACEBOOK', 'INSTAGRAM', 'WEBSITE', WEBSITE_WHATSAPP_SOURCE, 'WHATSAPP',
+                  'REFERRAL', 'WALK_IN', 'META', 'META-LEAD-FORM', 'META_LEAD_FORM',
                 ]),
               },
             ],

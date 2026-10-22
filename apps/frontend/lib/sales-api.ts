@@ -153,6 +153,10 @@ function mapSource(ch: string | null | undefined): LeadSource {
     case 'FACEBOOK':  return 'FACEBOOK';
     case 'INSTAGRAM': return 'INSTAGRAM';
     case 'WEBSITE':   return 'WEBSITE';
+    // A chat started from the marketing site's WhatsApp buttons (the webhook
+    // reads the site's [Ref: …] token). Keep in sync with the backend's
+    // sourceReverseAnd WEBSITE bucket.
+    case 'WHATSAPP-WEBSITE': return 'WEBSITE';
     case 'WHATSAPP':  return 'WHATSAPP';
     case 'REFERRAL':  return 'REFERRAL';
     case 'PHONE':     return 'PHONE';

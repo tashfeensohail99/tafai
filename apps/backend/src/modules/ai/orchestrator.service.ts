@@ -448,6 +448,16 @@ export class OrchestratorService {
     const isFirstBotReply =
       !input.windowSave &&
       !history.some((m) => m.direction === 'OUTBOUND' && m.sentByEmployeeId === null);
+
+    // --- Opener-only mode (user directive 2026-10-23) ----------------------
+    // The bot sends ONLY the first-contact opener, then stays SILENT — no
+    // follow-up replies and no window-saver messages — until a human takes
+    // over. Restore the full conversational bot by setting
+    // AI_BOT_CONVERSATION_ENABLED=true (env flag, no code change).
+    if (process.env.AI_BOT_CONVERSATION_ENABLED !== 'true' && !isFirstBotReply) {
+      return { mode: 'SKIPPED', skipReason: 'opener-only-mode' };
+    }
+
     // Bare greeting detection: customer said "hi" / "hello" / "salam" / etc.
     // with no actual question attached. Drives the "how can we assist you
     // today?" branch of the welcome.

@@ -549,17 +549,26 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'duplicate-reply' };
     }
 
-    // Prepend the house welcome DETERMINISTICALLY on the first bot reply, with
-    // the lead's ACTUAL assigned rep — never an LLM-written name (which drifted
-    // to other reps ~4% of the time). agentFirstName is the live-read assignee;
-    // if the lead is unassigned we greet without a name rather than guess.
+    // First-contact opener. The FIRST bot reply is a fixed profile-intake
+    // message (we send this instead of the LLM body), with the lead's ACTUAL
+    // assigned rep woven in — never an LLM-written name (which drifted to other
+    // reps ~4% of the time). agentFirstName is the live-read assignee; if the
+    // lead is unassigned we drop the "I'm …" line rather than guess a name.
     if (isFirstBotReply) {
-      const greetName = leadFirstName ? `, ${leadFirstName}` : '';
-      const intro = agentFirstName
-        ? ` I'm ${agentFirstName}, Immigration Solutions Associate.`
-        : '';
-      reply =
-        `Welcome to Tashfeen Immigration Solutions${greetName}!${intro}\n\n${reply}`.trim();
+      const lines = ['Thank you for contacting Tashfeen Immigration Solutions!', ''];
+      if (agentFirstName) {
+        lines.push(`I'm ${agentFirstName}, your Immigration Solutions Associate, and I'll be assisting you.`, '');
+      }
+      lines.push(
+        'Kindly share a few basic details:',
+        '• Age',
+        '• Education',
+        '• Experience (Job / Business)',
+        "• Visa category / immigration program you're interested in",
+        '',
+        "We'll then guide you to the options best suited to your profile.",
+      );
+      reply = lines.join('\n');
     }
 
     // Brochure intent: if the customer asked for a brochure / PDF / details,

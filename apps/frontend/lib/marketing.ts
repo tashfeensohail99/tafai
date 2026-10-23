@@ -190,6 +190,46 @@ export function getMarketingLeadsByRep(
   return apiFetch<MarketingLeadsByRepResponse>(`/admin/marketing/leads-by-rep${qs}`);
 }
 
+/* ------------------------------------------------------------------ calls by rep ---------- */
+
+export interface MarketingRepCalls {
+  /** The routed agent's employee id (null only for the '(unknown)' bucket). */
+  employeeId: string | null;
+  name: string;
+  /** Ad-sourced inbound calls handled by / attributed to this rep in the window. */
+  calls: number;
+  /** Subset of `calls` our system actually routed to the rep's line. */
+  routed: number;
+}
+
+export interface MarketingCallsNotRoutedReason {
+  reason: string;
+  calls: number;
+}
+
+export interface MarketingCallsByRepResponse {
+  window: MarketingWindow;
+  /** All Meta-ad-sourced inbound calls in the window. */
+  total: number;
+  /** Of those, how many we routed to a rep's line (matched = true). */
+  routed: number;
+  /** total − routed (no owner / no extension / blocked …). */
+  notRouted: number;
+  byRep: MarketingRepCalls[];
+  notRoutedReasons: MarketingCallsNotRoutedReason[];
+}
+
+/**
+ * Telenor inbound calls from Meta-ad customers, per rep + totals. Counts only —
+ * "routed" is "delivered to the rep's line" (Telenor doesn't report answered).
+ */
+export function fetchMetaAdCalls(
+  opts: { days?: number; from?: string; to?: string } = {},
+): Promise<MarketingCallsByRepResponse> {
+  const qs = buildQuery({ days: opts.days, from: opts.from, to: opts.to });
+  return apiFetch<MarketingCallsByRepResponse>(`/admin/marketing/calls-by-rep${qs}`);
+}
+
 /* ------------------------------------------------------------------ alerts + health (1F) --- */
 
 export type MarketingAlertSeverity = 'critical' | 'warning' | 'info';

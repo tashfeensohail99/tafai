@@ -98,6 +98,18 @@ export class MarketingController {
     return this.svc.getLeadsByRep(q.days, q.from, q.to);
   }
 
+  /**
+   * Telenor inbound CALLS from Meta-ad-sourced leads in the window, per rep +
+   * totals (+ a "why not routed" breakdown). Counts only — mirrors
+   * leads-by-rep. "Routed" = call delivered to a rep's line (Telenor doesn't
+   * report answered/missed).
+   */
+  @Get('calls-by-rep')
+  @RequirePermissions('marketing.view')
+  callsByRep(@Query() q: WindowQuery) {
+    return this.svc.getCallsByRep(q.days, q.from, q.to);
+  }
+
   // Phase 1F — Alerts + Health, both read-only, both marketing.view.
   @Get('alerts')
   @RequirePermissions('marketing.view')

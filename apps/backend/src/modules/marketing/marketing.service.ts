@@ -852,4 +852,87 @@ export class MarketingService {
       totals,
     };
   }
+
+  /**
+   * Telenor Smart Office INBOUND calls from Meta/Facebook-ad-sourced leads,
+   * per rep + totals, for the given window. Mirrors getLeadsByRep's window
+   * handling. A call is "from an ad" when its lead carries a `metaSource`
+   * ('ctwa' | 'lead-form'); "routed to a rep" means `matched = true` (we
+   * returned an extension). There is NO Prisma relation from the call log to
+   * Lead, so we JOIN in raw SQL on the denormalized `leadId`.
+   *
+   * Telenor does NOT report answered/missed back to us, so `routed` is "calls
+   * delivered to the rep's line", not "calls answered". COUNTS ONLY — no PII
+   * beyond the routed agent's own name.
+   */
+  async getCallsByRep(daysArg?: number, fromArg?: string, toArg?: string) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg, fromArg, toArg);
+
+    const [totalsRow, byRepRows, reasonRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ total: bigint; routed: bigint }>>(
+        `SELECT COUNT(*)::bigint AS total,
+                COUNT(*) FILTER (WHERE sc.matched = true)::bigint AS routed
+         FROM crm.smart_office_call_logs sc
+         JOIN crm.leads l ON l.id = sc."leadId"
+         WHERE l."metaSource" IS NOT NULL
+           AND sc."createdAt" >= $1 AND sc."createdAt" < $2`,
+        from,
+        toEnd,
+      ),
+      this.prisma.$queryRawUnsafe<
+        Array<{ employeeId: string; name: string; calls: bigint; routed: bigint }>
+      >(
+        `SELECT sc."agentEmployeeId" AS "employeeId",
+                COALESCE(sc."agentName", '(unknown)') AS name,
+                COUNT(*)::bigint AS calls,
+                COUNT(*) FILTER (WHERE sc.matched = true)::bigint AS routed
+         FROM crm.smart_office_call_logs sc
+         JOIN crm.leads l ON l.id = sc."leadId"
+         WHERE l."metaSource" IS NOT NULL
+           AND sc."agentEmployeeId" IS NOT NULL
+           AND sc."createdAt" >= $1 AND sc."createdAt" < $2
+         GROUP BY sc."agentEmployeeId", sc."agentName"
+         ORDER BY calls DESC`,
+        from,
+        toEnd,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ reason: string; calls: bigint }>>(
+        `SELECT COALESCE(sc.reason, '(unknown)') AS reason,
+                COUNT(*)::bigint AS calls
+         FROM crm.smart_office_call_logs sc
+         JOIN crm.leads l ON l.id = sc."leadId"
+         WHERE l."metaSource" IS NOT NULL
+           AND sc.matched = false
+           AND sc."createdAt" >= $1 AND sc."createdAt" < $2
+         GROUP BY sc.reason
+         ORDER BY calls DESC`,
+        from,
+        toEnd,
+      ),
+    ]);
+
+    const total = this.num(totalsRow[0]?.total);
+    const routed = this.num(totalsRow[0]?.routed);
+
+    const byRep = byRepRows.map((r) => ({
+      employeeId: r.employeeId as string | null,
+      name: r.name,
+      calls: this.num(r.calls),
+      routed: this.num(r.routed),
+    }));
+
+    const notRoutedReasons = reasonRows.map((r) => ({
+      reason: r.reason,
+      calls: this.num(r.calls),
+    }));
+
+    return {
+      window: { from: this.ymd(from), to: this.ymd(to), days } satisfies MarketingWindow,
+      total,
+      routed,
+      notRouted: total - routed,
+      byRep,
+      notRoutedReasons,
+    };
+  }
 }

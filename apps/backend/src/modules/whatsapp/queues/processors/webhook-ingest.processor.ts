@@ -18,7 +18,12 @@ import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
 import { findClientByNormalizedPhone } from '../../../../common/phone/client-dedupe';
-import { inboundWhatsAppLeadAttribution } from '../../../../common/website-ref';
+import {
+  inboundWhatsAppLeadAttribution,
+  lateWebsiteRefAttribution,
+  parseWebsiteRef,
+  WEBSITE_WHATSAPP_SOURCE,
+} from '../../../../common/website-ref';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
@@ -1012,6 +1017,40 @@ export class WebhookIngestProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * Website attribution for an existing lead whose website [Ref: …] token came
+   * in a later message. Loads the fields lateWebsiteRefAttribution needs and
+   * writes its result; the conditional update (still 'whatsapp') makes a
+   * second ref message a no-op. Never throws — attribution must not break
+   * inbound ingest.
+   */
+  private async applyLateWebsiteRef(leadId: string, text: string | null | undefined, now: Date): Promise<void> {
+    if (!parseWebsiteRef(text)) return; // the common case: no ref, no query
+    try {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: leadId },
+        select: {
+          sourceChannel: true,
+          createdAt: true,
+          convertedAt: true,
+          metaSource: true,
+          metaAdId: true,
+          serviceInterest: true,
+          notes: true,
+        },
+      });
+      const data = lead ? lateWebsiteRefAttribution(lead, text, now) : null;
+      if (!data) return;
+      const { count } = await this.prisma.lead.updateMany({
+        where: { id: leadId, sourceChannel: 'whatsapp', deletedAt: null },
+        data,
+      });
+      if (count) this.log.log(`lead ${leadId} re-attributed to ${WEBSITE_WHATSAPP_SOURCE} (website ref in a later message)`);
+    } catch (err) {
+      this.log.warn(`late website-ref attribution failed for lead ${leadId}: ${(err as Error).message}`);
+    }
+  }
+
   private async ingestInboundMessage(
     channelId: string,
     msg: MetaMessage,
@@ -1072,6 +1111,11 @@ export class WebhookIngestProcessor extends WorkerHost {
         if (existingLead) {
           leadId = existingLead.id;
           blocked = !!existingLead.blockedAt;
+          // The site's [Ref: …] usually arrives in the contact's SECOND message
+          // ("Hi" first, then the button's pre-filled text) — after the lead
+          // was created from the "Hi" as plain 'whatsapp'. Re-attribute a
+          // fresh lead; the rules are in lateWebsiteRefAttribution.
+          if (!blocked) await this.applyLateWebsiteRef(existingLead.id, msg.text?.body, now);
         } else {
           // Create a new Lead from the WhatsApp profile. Required fields:
           // firstName, lastName, phone. branchId optional but we pick the

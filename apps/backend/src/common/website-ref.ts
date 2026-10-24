@@ -36,7 +36,18 @@ const PREFIX_TO_SERVICE: Readonly<Record<string, ServiceTypeCode>> = {
   SV: 'STUDY_VISA',
 };
 
-const WEBSITE_REF_RE = /\[Ref:\s*(WP|VV|JR|SV)-([0-9A-Z]{4})\]/i;
+/**
+ * The site's free tools send a fixed token instead of a page hash — the CRS and
+ * FSW calculators are permanent-residence questions, the refusal decoder a
+ * re-application one.
+ */
+const TOOL_TO_SERVICE: Readonly<Record<string, ServiceTypeCode>> = {
+  CRS: 'PR_CASE',
+  FSW: 'PR_CASE',
+  RF: 'JR_RESUBMISSION',
+};
+
+const WEBSITE_REF_RE = /\[Ref:\s*(?:(WP|VV|JR|SV)-([0-9A-Z]{4})|(CRS|FSW|RF)-TOOL)\]/i;
 
 export interface WebsiteRef {
   /** Normalised token, e.g. 'WP-7K2M'. */
@@ -49,9 +60,15 @@ export function parseWebsiteRef(text: string | null | undefined): WebsiteRef | n
   if (!text) return null;
   const m = WEBSITE_REF_RE.exec(text);
   if (!m) return null;
+  if (m[3]) {
+    const tool = m[3].toUpperCase();
+    return { ref: `${tool}-TOOL`, serviceInterest: TOOL_TO_SERVICE[tool]! };
+  }
   const prefix = m[1]!.toUpperCase();
   return { ref: `${prefix}-${m[2]!.toUpperCase()}`, serviceInterest: PREFIX_TO_SERVICE[prefix]! };
 }
+
+const websiteNote = (ref: string) => `Came from the website's WhatsApp button (ref ${ref}).`;
 
 /**
  * The attribution fields for a lead auto-created from an inbound WhatsApp
@@ -69,6 +86,66 @@ export function inboundWhatsAppLeadAttribution(firstMessageText: string | null |
   return {
     sourceChannel: WEBSITE_WHATSAPP_SOURCE,
     serviceInterest: website.serviceInterest,
-    notes: `Came from the website's WhatsApp button (ref ${website.ref}).`,
+    notes: websiteNote(website.ref),
+  };
+}
+
+/**
+ * How long after a WhatsApp lead is auto-created a website ref in a LATER
+ * message still re-attributes it. Long enough for "Hi" now, pre-filled message
+ * after lunch; short enough that a months-old lead who happens to visit the
+ * site keeps the source it actually came from.
+ */
+export const LATE_WEBSITE_REF_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** The lead fields lateWebsiteRefAttribution reads. */
+export interface LeadForLateWebsiteRef {
+  sourceChannel: string | null;
+  createdAt: Date;
+  convertedAt: Date | null;
+  metaSource: string | null;
+  metaAdId: string | null;
+  serviceInterest: string | null;
+  notes: string | null;
+}
+
+/**
+ * Website attribution for an EXISTING lead, when the site's ref arrives in a
+ * later message rather than the first.
+ *
+ * In production most website visitors send a short "Hi" before the button's
+ * pre-filled text, so the lead is created from the "Hi" as plain 'whatsapp' and
+ * inboundWhatsAppLeadAttribution never sees the ref (2026-10-23: every website
+ * chat after #475 shipped arrived this way). This re-attributes such a lead —
+ * and only such a lead:
+ *
+ *  - it is still the auto-created 'whatsapp' source (any other source — an
+ *    earlier website tag, a walk-in, a referral — stays untouched);
+ *  - no Meta ad started the chat (first touch wins: the ad keeps the credit);
+ *  - it has not converted;
+ *  - it was created within LATE_WEBSITE_REF_WINDOW_MS.
+ *
+ * Owner, status and round-robin are not touched — only the source, the service
+ * if Sales hasn't set one, and the ref note. 'whatsapp-website' is in the same
+ * daily-cap source list as 'whatsapp', so the cap counts don't move. Returns
+ * the update, or null to leave the lead as it is.
+ */
+export function lateWebsiteRefAttribution(
+  lead: LeadForLateWebsiteRef,
+  messageText: string | null | undefined,
+  now: Date,
+): { sourceChannel: string; serviceInterest?: ServiceTypeCode; notes: string } | null {
+  const website = parseWebsiteRef(messageText);
+  if (!website) return null;
+  if (lead.sourceChannel !== 'whatsapp') return null;
+  if (lead.metaSource || lead.metaAdId) return null;
+  if (lead.convertedAt) return null;
+  if (now.getTime() - lead.createdAt.getTime() > LATE_WEBSITE_REF_WINDOW_MS) return null;
+
+  const note = websiteNote(website.ref);
+  return {
+    sourceChannel: WEBSITE_WHATSAPP_SOURCE,
+    ...(lead.serviceInterest ? {} : { serviceInterest: website.serviceInterest }),
+    notes: !lead.notes ? note : lead.notes.includes(note) ? lead.notes : `${lead.notes}\n${note}`,
   };
 }

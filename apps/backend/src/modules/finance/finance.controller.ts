@@ -24,6 +24,7 @@ import { FinanceService } from './finance.service';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import {
+  AddProofsDto,
   AdminDeleteHandoverDto,
   CleanupOrphanHandoversDto,
   CreateFinanceHandoverDto,
@@ -226,6 +227,49 @@ export class FinanceController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.financeService.updateHandover(id, dto, user);
+  }
+
+  /**
+   * List every proof-of-payment file on a handover: the primary receipt plus
+   * any extra slips (added at record time or later). Each carries a fresh
+   * signed URL + an `isPrimary` flag. Gated by the handover view permissions.
+   */
+  @Get('handovers/:id/proofs')
+  @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
+  listHandoverProofs(@Param('id', ParseUUIDPipe) id: string) {
+    return this.financeService.listHandoverProofs(id);
+  }
+
+  /**
+   * Attach additional proof file(s) to an existing handover — for the next
+   * bank transfer of a split installment. Same gate as recording a payment.
+   */
+  @Post('handovers/:id/proofs')
+  @RequireAnyPermissions('finance.record_payment', 'finance_handover.create')
+  addHandoverProofs(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddProofsDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.addHandoverProofs(id, dto, user);
+  }
+
+  /** List every proof-of-payment file on a verified payment. */
+  @Get('payments/:id/proofs')
+  @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance.verify_payment')
+  listPaymentProofs(@Param('id', ParseUUIDPipe) id: string) {
+    return this.financeService.listPaymentProofs(id);
+  }
+
+  /** Attach additional proof file(s) to a payment after verification. */
+  @Post('payments/:id/proofs')
+  @RequireAnyPermissions('finance.record_payment', 'finance.verify_payment')
+  addPaymentProofs(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddProofsDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.addPaymentProofs(id, dto, user);
   }
 
   @Post('handovers/:id/review')

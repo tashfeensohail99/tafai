@@ -603,6 +603,62 @@ export interface AdminDeleteHandoverResult {
   deletedAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Multiple proofs per payment
+// ---------------------------------------------------------------------------
+
+/** One proof-of-payment file on a handover/payment (primary receipt or extra). */
+export interface FinanceProofItem {
+  id: string;
+  isPrimary: boolean;
+  fileName: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  createdAt: string;
+  /** Fresh short-lived signed URL (null if the file couldn't be signed). */
+  url: string | null;
+}
+
+/** An uploaded proof file to send to the backend (base64 body + metadata). */
+export interface ProofFilePayload {
+  fileName: string;
+  mimeType?: string;
+  contentBase64: string;
+}
+
+/** Full proof set for a handover: primary receipt first, then any extras. */
+export async function fetchHandoverProofs(
+  handoverId: string,
+): Promise<FinanceProofItem[]> {
+  return apiFetch<FinanceProofItem[]>(`/finance/handovers/${handoverId}/proofs`, {
+    cache: 'no-store',
+  });
+}
+
+/** Attach one or more additional proof files to an existing handover. */
+export async function addHandoverProofs(
+  handoverId: string,
+  proofs: ProofFilePayload[],
+): Promise<FinanceProofItem[]> {
+  return apiFetch<FinanceProofItem[]>(`/finance/handovers/${handoverId}/proofs`, {
+    method: 'POST',
+    body: JSON.stringify({ proofs }),
+    cache: 'no-store',
+  });
+}
+
+/** Attach one or more additional proof files to a verified payment. */
+export async function addPaymentProofs(
+  paymentId: string,
+  proofs: ProofFilePayload[],
+): Promise<FinanceProofItem[]> {
+  return apiFetch<FinanceProofItem[]>(`/finance/payments/${paymentId}/proofs`, {
+    method: 'POST',
+    body: JSON.stringify({ proofs }),
+    cache: 'no-store',
+  });
+}
+
 /**
  * Step-up admin deletion of a finance handover. The currently-logged-in
  * finance user initiates the request; the `adminEmail` + `adminPassword`

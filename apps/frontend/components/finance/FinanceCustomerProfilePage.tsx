@@ -50,7 +50,7 @@ import {
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
 import { labelForServiceCode } from '@/lib/service-types';
-import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
+import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, addHandoverProofs, fetchHandoverProofs, FINANCE_CURRENCIES, type ApiHandover, type FinanceProofItem } from '@/lib/finance-api';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 import { sendTemplate } from '@/lib/whatsapp';
 import { FamilyApplicantsCard } from '@/components/finance/FamilyApplicantsCard';
@@ -199,6 +199,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const payFileRef = useRef<HTMLInputElement>(null);
+  // Hidden picker for "Add proof" on an already-recorded submission row.
+  const addProofRef = useRef<HTMLInputElement>(null);
   // Signed-agreement pages staged for upload. A client often sends the signed
   // copy as several photos/pages one at a time; we accumulate + reorder them
   // here, then the backend merges them into a single PDF on upload.
@@ -209,11 +211,20 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [payCurrency, setPayCurrency] = useState('CAD');
   const [expCurrency, setExpCurrency] = useState('CAD');
   const [payOpen, setPayOpen] = useState(false);
-  const [payFile, setPayFile] = useState<File | null>(null);
+  // A single installment can arrive as several bank transfers → accept several
+  // proof files. The first is the PRIMARY receipt; the rest are extra proofs.
+  const [payFiles, setPayFiles] = useState<File[]>([]);
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState('BANK');
   const [payRef, setPayRef] = useState('');
   const [payNote, setPayNote] = useState('');
+
+  // "Add proof" (attach another transfer's slip to an existing submission) +
+  // the per-row proof viewer (primary receipt + any extras).
+  const [addProofTarget, setAddProofTarget] = useState<string | null>(null);
+  const [proofsByHandover, setProofsByHandover] = useState<
+    Record<string, { open: boolean; loading: boolean; items: FinanceProofItem[] }>
+  >({});
 
   // Inline payment verification (Payments tab)
   const [verifyId, setVerifyId] = useState<string | null>(null);
@@ -342,7 +353,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
 
   const resetPayForm = () => {
     setPayOpen(false);
-    setPayFile(null);
+    setPayFiles([]);
     setPayAmount('');
     setPayCurrency('CAD');
     setPayMethod('BANK');
@@ -360,13 +371,23 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   };
 
   const handleRecordPayment = async () => {
-    if (!data || !payFile) { setError('Choose a receipt file first.'); return; }
+    if (!data || payFiles.length === 0) { setError('Choose at least one receipt file first.'); return; }
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) { setError('Enter a valid payment amount.'); return; }
     setBusy('record');
     setError(null);
     try {
-      const base64 = fileToBase64(await payFile.arrayBuffer());
+      // The first file is the PRIMARY receipt; any others are extra proofs for
+      // the same installment (it arrived as several bank transfers).
+      const [primary, ...rest] = payFiles;
+      const base64 = fileToBase64(await primary.arrayBuffer());
+      const additionalProofs = await Promise.all(
+        rest.map(async (f) => ({
+          fileName: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          contentBase64: fileToBase64(await f.arrayBuffer()),
+        })),
+      );
       // Pin the payment to the program in focus so it credits the right ledger
       // when the customer holds more than one agreement.
       const targetAgreementId = data.agreements?.[programIdx]?.agreement.id;
@@ -378,9 +399,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         paymentMethod: payMethod,
         transactionRef: payRef.trim() || undefined,
         notes: payNote.trim() || undefined,
-        receiptFileName: payFile.name,
-        receiptMimeType: payFile.type || 'application/octet-stream',
+        receiptFileName: primary.name,
+        receiptMimeType: primary.type || 'application/octet-stream',
         receiptContentBase64: base64,
+        additionalProofs: additionalProofs.length ? additionalProofs : undefined,
       });
       resetPayForm();
       setNotice('Payment recorded. Confirm it below to verify and update the ledger.');
@@ -390,6 +412,60 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     } finally {
       setBusy(null);
     }
+  };
+
+  // ── Multiple proofs per payment ────────────────────────────────────────────
+  // Lazily load the full proof set (primary receipt + extras) for a submission
+  // row, toggling the viewer open/closed.
+  const toggleProofs = async (handoverId: string) => {
+    const current = proofsByHandover[handoverId];
+    if (current?.open) {
+      setProofsByHandover((m) => ({ ...m, [handoverId]: { ...current, open: false } }));
+      return;
+    }
+    setProofsByHandover((m) => ({
+      ...m,
+      [handoverId]: { open: true, loading: true, items: current?.items ?? [] },
+    }));
+    try {
+      const items = await fetchHandoverProofs(handoverId);
+      setProofsByHandover((m) => ({ ...m, [handoverId]: { open: true, loading: false, items } }));
+    } catch (e) {
+      setProofsByHandover((m) => ({ ...m, [handoverId]: { open: true, loading: false, items: [] } }));
+      setError(e instanceof Error ? e.message : 'Could not load proofs');
+    }
+  };
+
+  // Attach one or more extra proof slips to an existing submission (the next
+  // bank transfer of a split installment).
+  const handleAddProofs = async (handoverId: string, files: File[]) => {
+    if (files.length === 0) return;
+    setBusy(`add-proof:${handoverId}`);
+    setError(null);
+    try {
+      const proofs = await Promise.all(
+        files.map(async (f) => ({
+          fileName: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          contentBase64: fileToBase64(await f.arrayBuffer()),
+        })),
+      );
+      const items = await addHandoverProofs(handoverId, proofs);
+      setProofsByHandover((m) => ({ ...m, [handoverId]: { open: true, loading: false, items } }));
+      setNotice(`${files.length} proof${files.length > 1 ? 's' : ''} added.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add proof');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Hidden-input onChange target: which submission the chosen files belong to.
+  const onAddProofFiles = (files: FileList | null) => {
+    const target = addProofTarget;
+    setAddProofTarget(null);
+    if (!target || !files || files.length === 0) return;
+    void handleAddProofs(target, Array.from(files));
   };
 
   // ── Inline payment verification ──────────────────────────────────────────
@@ -1033,27 +1109,54 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                   </div>
                 ) : null}
                 <div>
-                  <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt</div>
+                  <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt {payFiles.length > 1 ? `· ${payFiles.length} files` : ''}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <SecondaryButton size="sm" iconLeft={<FileText size={14} />} onClick={() => payFileRef.current?.click()} disabled={busy !== null}>
-                      {payFile ? 'Change file' : 'Choose receipt'}
+                      {payFiles.length > 0 ? 'Add more files' : 'Choose receipt'}
                     </SecondaryButton>
-                    <span className="sos-text-muted" style={{ fontSize: 13 }}>{payFile ? payFile.name : 'PDF or image of the proof of payment'}</span>
+                    {payFiles.length === 0 ? (
+                      <span className="sos-text-muted" style={{ fontSize: 13 }}>PDF or image of the proof of payment · add several if the installment came in multiple transfers</span>
+                    ) : null}
                     <input
                       ref={payFileRef}
                       type="file"
+                      multiple
                       accept="application/pdf,image/png,image/jpeg,image/webp"
                       style={{ display: 'none' }}
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setPayFile(f); }}
+                      onChange={(e) => {
+                        const chosen = Array.from(e.target.files ?? []);
+                        if (chosen.length) setPayFiles((prev) => [...prev, ...chosen]);
+                        e.target.value = '';
+                      }}
                     />
                   </div>
+                  {payFiles.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                      {payFiles.map((f, i) => (
+                        <div key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                          <FileText size={13} className="sos-text-faint" style={{ flex: '0 0 auto' }} />
+                          <span className="sos-text-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                          {i === 0 ? <StatusBadge tone="info" size="sm" dot={false}>Primary</StatusBadge> : null}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${f.name}`}
+                            onClick={() => setPayFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                            disabled={busy !== null}
+                            style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--sos-text-faint)', display: 'inline-flex' }}
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                   <PrimaryButton
                     size="sm"
                     iconLeft={busy === 'record' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
                     onClick={() => void handleRecordPayment()}
-                    disabled={busy !== null || !payFile || !payAmount}
+                    disabled={busy !== null || payFiles.length === 0 || !payAmount}
                   >
                     {busy === 'record' ? 'Recording…' : 'Record payment'}
                   </PrimaryButton>
@@ -1118,7 +1221,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
               <span className="sos-text-faint" style={{ fontSize: 12 }}>· awaiting / past verification</span>
             </div>
             <Table
-              head={['Amount', 'Receipt', 'Status', 'Submitted', '']}
+              head={['Amount', 'Proofs', 'Status', 'Submitted', '']}
               empty="No payment recorded yet. When the client pays, record the receipt above, then verify it here."
               rows={data.handovers.map((h) => {
                 const done = ['PAYMENT_VERIFIED', 'SENT_TO_PROCESSING'].includes(h.status);
@@ -1131,29 +1234,78 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                       : moneyLocked
                         ? <span key="a" title={moneyLockHint} className="sos-text-faint" style={{ fontSize: 12, cursor: 'not-allowed' }}>Locked · approve agreement first</span>
                         : <PrimaryButton key="a" size="sm" onClick={() => void openVerify(h.id)} disabled={busy !== null}>Review &amp; verify</PrimaryButton>;
+                const ps = proofsByHandover[h.id];
+                const extras = (ps?.items ?? []).filter((p) => !p.isPrimary);
                 return [
                   money(h.amount, h.currency),
-                  h.receiptFileName
-                    ? (
+                  <div key="r" style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                    {h.receiptFileName ? (
                       <button
-                        key="r"
                         type="button"
                         className="sos-text-link"
                         onClick={() => void openReceipt(h.id)}
                         disabled={busy !== null}
-                        title="View the uploaded receipt"
+                        title="View the primary receipt"
                         style={{ background: 'none', border: 'none', padding: 0, cursor: busy !== null ? 'wait' : 'pointer', font: 'inherit', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                       >
                         <Eye size={13} style={{ flex: '0 0 auto' }} />
                         {busy === `receipt:${h.id}` ? 'Opening…' : h.receiptFileName}
                       </button>
-                    )
-                    : '—',
+                    ) : <span className="sos-text-faint">—</span>}
+                    {ps?.open && extras.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 19 }}>
+                        {extras.map((p) => (
+                          <a
+                            key={p.id}
+                            href={p.url ?? '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="sos-text-link"
+                            style={{ fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 6, pointerEvents: p.url ? undefined : 'none', opacity: p.url ? 1 : 0.5 }}
+                          >
+                            <Download size={12} style={{ flex: '0 0 auto' }} /> {p.fileName}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                    {ps?.open && !ps.loading && extras.length === 0 ? (
+                      <span className="sos-text-faint" style={{ fontSize: 12, paddingLeft: 19 }}>No extra proofs.</span>
+                    ) : null}
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="sos-text-link"
+                        onClick={() => void toggleProofs(h.id)}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', fontSize: 12 }}
+                      >
+                        {ps?.loading ? 'Loading…' : ps?.open ? 'Hide proofs' : 'View all proofs'}
+                      </button>
+                      {h.status !== 'CANCELLED' ? (
+                        <button
+                          type="button"
+                          className="sos-text-link"
+                          onClick={() => { setAddProofTarget(h.id); addProofRef.current?.click(); }}
+                          disabled={busy !== null}
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: busy !== null ? 'wait' : 'pointer', font: 'inherit', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <Plus size={12} /> {busy === `add-proof:${h.id}` ? 'Uploading…' : 'Add proof'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>,
                   <StatusBadge key="s" tone={tone(h.status)} size="sm" dot={false}>{label(h.status)}</StatusBadge>,
                   fmtDate(h.submittedAt),
                   action,
                 ];
               })}
+            />
+            <input
+              ref={addProofRef}
+              type="file"
+              multiple
+              accept="application/pdf,image/png,image/jpeg,image/webp"
+              style={{ display: 'none' }}
+              onChange={(e) => { onAddProofFiles(e.target.files); e.target.value = ''; }}
             />
           </GlassCard>
           <GlassCard variant="default" padded={false}>

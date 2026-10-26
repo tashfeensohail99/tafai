@@ -2431,6 +2431,11 @@ model Payment {
   invoice         Invoice          @relation(fields: [invoiceId], references: [id])
   financeHandover FinanceHandover?
   receipt         Receipt?
+  /// Extra proof files attached to this payment (beyond the primary receipt).
+  /// A single installment often arrives as several bank transfers; each one's
+  /// slip can be attached here. Additive — the primary proof stays on
+  /// FinanceHandover.receiptKey / Payment.receiptKey.
+  extraProofs     FinanceProof[]
 
   @@index([invoiceId])
   @@index([status])
@@ -2549,6 +2554,10 @@ model FinanceHandover {
   invoice        Invoice?        @relation(fields: [invoiceId], references: [id])
   payment        Payment?        @relation(fields: [paymentId], references: [id])
   processingCase ProcessingCase?
+  /// Extra proof files for this handover (beyond the primary receipt). An
+  /// installment split across several bank transfers attaches one slip per
+  /// transfer here; the primary stays on receiptKey. Additive.
+  extraProofs    FinanceProof[]
 
   @@index([leadId])
   @@index([invoiceId])
@@ -2556,6 +2565,35 @@ model FinanceHandover {
   @@index([status])
   @@index([createdByUserId])
   @@map("finance_handovers")
+  @@schema("finance")
+}
+
+/// Additional proof-of-payment files attached to a finance handover (and, after
+/// verification, to its Payment). The PRIMARY proof is still the single
+/// FinanceHandover.receiptKey / Payment.receiptKey — this table only holds the
+/// EXTRA slips, so a 150K installment that arrived as 2–3 separate bank
+/// transfers can carry every transfer's proof, and finance can come back later
+/// to add the next one. Purely additive; the single-proof flow is untouched.
+model FinanceProof {
+  id               String    @id @default(uuid())
+  /// The handover this proof belongs to (set at record time). Nullable because
+  /// a proof may instead be anchored directly to a Payment (added after verify).
+  handoverId       String?
+  /// The payment this proof belongs to (set when added after verification).
+  paymentId        String?
+  storageKey       String
+  fileName         String
+  mimeType         String?
+  sizeBytes        Int?
+  uploadedByUserId String?
+  createdAt        DateTime  @default(now())
+
+  handover FinanceHandover? @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  payment  Payment?         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([handoverId])
+  @@index([paymentId])
+  @@map("finance_proofs")
   @@schema("finance")
 }
 

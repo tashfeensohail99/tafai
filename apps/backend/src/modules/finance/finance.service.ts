@@ -28,6 +28,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import {
+  AddProofsDto,
   CreateFinanceHandoverDto,
   CreateInvoiceDto,
   CreatePaymentDto,
@@ -36,6 +37,7 @@ import {
   ListFinanceHandoversQueryDto,
   ListFinanceQueueQueryDto,
   ListInvoicesQueryDto,
+  ProofFileDto,
   RefundPaymentDto,
   UpdateFinanceHandoverDto,
   UpdateInvoiceDto,
@@ -827,6 +829,16 @@ export class FinanceService {
       include: this.financeHandoverInclude,
     });
 
+    // Extra proof slips (a single installment split across several bank
+    // transfers). The primary proof above is unchanged; these are additive.
+    if (dto.additionalProofs?.length) {
+      await this.createProofRows(
+        { handoverId: created.id },
+        dto.additionalProofs,
+        user.id,
+      );
+    }
+
     await this.auditLog.log({
       actorUserId: user.id,
       action: AuditAction.FINANCE_HANDOVER_CREATED,
@@ -912,6 +924,209 @@ export class FinanceService {
       ...created,
       receiptDownloadUrl: await this.getSignedReceiptUrl(created.receiptKey),
     };
+  }
+
+  // ── Multiple proofs per payment ──────────────────────────────────────────
+  // A single installment often arrives as 2–3 separate bank transfers (per-txn
+  // limits). The PRIMARY proof stays on FinanceHandover.receiptKey; these
+  // methods attach EXTRA slips (FinanceProof rows) to a handover or payment,
+  // including later — after the first proofs were already recorded.
+
+  /** Normalise an AddProofsDto (single file OR `proofs[]`) into a flat list. */
+  private normaliseProofFiles(dto: AddProofsDto): ProofFileDto[] {
+    const files: ProofFileDto[] = [...(dto.proofs ?? [])];
+    if (dto.contentBase64 && dto.fileName) {
+      files.push({
+        fileName: dto.fileName,
+        mimeType: dto.mimeType,
+        contentBase64: dto.contentBase64,
+      });
+    }
+    if (files.length === 0) {
+      throw new BadRequestException('No proof files provided');
+    }
+    if (files.length > 20) {
+      throw new BadRequestException('Too many proof files in one request (max 20)');
+    }
+    return files;
+  }
+
+  /**
+   * Upload each proof file to the same bucket/path the primary receipt uses
+   * and create a FinanceProof row linked to the given handover OR payment.
+   * Enforces the same per-file size cap as receipts (via decodeBase64).
+   */
+  private async createProofRows(
+    target: { handoverId: string } | { paymentId: string },
+    files: ProofFileDto[],
+    userId: string,
+  ) {
+    const created: Array<{ id: string }> = [];
+    for (const file of files) {
+      const buffer = this.decodeBase64(file.contentBase64);
+      const upload = await this.storage.upload(
+        buffer,
+        file.mimeType ?? 'application/octet-stream',
+        'finance-handovers',
+        file.fileName,
+      );
+      const row = await this.prisma.financeProof.create({
+        data: {
+          handoverId: 'handoverId' in target ? target.handoverId : null,
+          paymentId: 'paymentId' in target ? target.paymentId : null,
+          storageKey: upload.key,
+          fileName: file.fileName,
+          mimeType: file.mimeType ?? upload.mimeType,
+          sizeBytes: upload.sizeBytes,
+          uploadedByUserId: userId,
+        },
+        select: { id: true },
+      });
+      created.push(row);
+    }
+    return created;
+  }
+
+  /** Add proof file(s) to an existing handover (access-scoped to the user). */
+  async addHandoverProofs(id: string, dto: AddProofsDto, user: RequestUser) {
+    const handover = await this.prisma.financeHandover.findFirst({
+      where: { id, ...this.buildHandoverScopeFilter(user) },
+      select: { id: true },
+    });
+    if (!handover) {
+      throw new NotFoundException('Finance handover not found');
+    }
+    const files = this.normaliseProofFiles(dto);
+    await this.createProofRows({ handoverId: handover.id }, files, user.id);
+    return this.listHandoverProofs(handover.id);
+  }
+
+  /** Add proof file(s) to an existing (verified) payment. */
+  async addPaymentProofs(id: string, dto: AddProofsDto, user: RequestUser) {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+    const files = this.normaliseProofFiles(dto);
+    await this.createProofRows({ paymentId: payment.id }, files, user.id);
+    return this.listPaymentProofs(payment.id);
+  }
+
+  /**
+   * The full proof set for a handover: the primary (receiptKey) first, then
+   * every extra FinanceProof — each with a fresh signed URL and an isPrimary
+   * flag. Also folds in proofs that were anchored to the handover's Payment
+   * (added after verification) so nothing is hidden.
+   */
+  async listHandoverProofs(id: string) {
+    const handover = await this.prisma.financeHandover.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        paymentId: true,
+        receiptKey: true,
+        receiptFileName: true,
+        receiptMimeType: true,
+        receiptSizeBytes: true,
+        createdAt: true,
+        extraProofs: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!handover) {
+      throw new NotFoundException('Finance handover not found');
+    }
+
+    const paymentProofs = handover.paymentId
+      ? await this.prisma.financeProof.findMany({
+          where: { paymentId: handover.paymentId },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+
+    const primary = {
+      id: `primary:${handover.id}`,
+      isPrimary: true,
+      fileName: handover.receiptFileName,
+      mimeType: handover.receiptMimeType,
+      sizeBytes: handover.receiptSizeBytes,
+      createdAt: handover.createdAt,
+      url: await this.getSignedReceiptUrl(handover.receiptKey),
+    };
+    const extras = await this.signProofRows([...handover.extraProofs, ...paymentProofs]);
+    return [primary, ...extras];
+  }
+
+  /**
+   * The full proof set for a Payment: the primary (payment.receiptKey) first,
+   * then every extra FinanceProof on the payment AND on its originating
+   * handover (proofs recorded before verification live on the handover).
+   */
+  async listPaymentProofs(id: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        receiptKey: true,
+        createdAt: true,
+        extraProofs: { orderBy: { createdAt: 'asc' } },
+        financeHandover: {
+          select: {
+            receiptFileName: true,
+            receiptMimeType: true,
+            extraProofs: { orderBy: { createdAt: 'asc' } },
+          },
+        },
+      },
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    const primaryKey = payment.receiptKey;
+    const result: Array<Record<string, unknown>> = [];
+    if (primaryKey) {
+      result.push({
+        id: `primary:${payment.id}`,
+        isPrimary: true,
+        fileName: payment.financeHandover?.receiptFileName ?? 'receipt',
+        mimeType: payment.financeHandover?.receiptMimeType ?? null,
+        sizeBytes: null,
+        createdAt: payment.createdAt,
+        url: await this.getSignedReceiptUrl(primaryKey),
+      });
+    }
+    const extras = await this.signProofRows([
+      ...(payment.financeHandover?.extraProofs ?? []),
+      ...payment.extraProofs,
+    ]);
+    return [...result, ...extras];
+  }
+
+  /** Attach a fresh signed URL + isPrimary=false to each FinanceProof row. */
+  private async signProofRows(
+    rows: Array<{
+      id: string;
+      fileName: string;
+      mimeType: string | null;
+      sizeBytes: number | null;
+      createdAt: Date;
+      storageKey: string;
+    }>,
+  ) {
+    return Promise.all(
+      rows.map(async (p) => ({
+        id: p.id,
+        isPrimary: false,
+        fileName: p.fileName,
+        mimeType: p.mimeType,
+        sizeBytes: p.sizeBytes,
+        createdAt: p.createdAt,
+        url: await this.getSignedReceiptUrl(p.storageKey),
+      })),
+    );
   }
 
   async updateHandover(id: string, dto: UpdateFinanceHandoverDto, user: RequestUser) {

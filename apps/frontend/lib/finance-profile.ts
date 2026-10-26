@@ -229,6 +229,11 @@ export function recordCustomerPayment(payload: {
   receiptFileName: string;
   receiptMimeType?: string;
   receiptContentBase64: string;
+  /**
+   * EXTRA proof files beyond the primary receipt — for an installment that
+   * arrived as several bank transfers. The primary stays `receiptContentBase64`.
+   */
+  additionalProofs?: Array<{ fileName: string; mimeType?: string; contentBase64: string }>;
 }): Promise<{ id: string }> {
   return apiFetch<{ id: string }>('/finance/handovers', {
     method: 'POST',

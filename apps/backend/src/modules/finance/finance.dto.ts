@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBase64,
   IsBoolean,
   IsDateString,
@@ -14,6 +16,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FinanceHandoverStatus, InvoiceStatus, PaymentStatus } from '@prisma/client';
@@ -317,6 +320,63 @@ export class CreateFinanceHandoverDto {
 
   @IsBase64()
   receiptContentBase64!: string;
+
+  /**
+   * EXTRA proof files beyond the primary `receiptContentBase64` — for a single
+   * installment that arrived as several bank transfers (per-transaction limits).
+   * Each becomes a FinanceProof row linked to the new handover. The primary
+   * proof is unchanged. Optional and capped to keep a single request sane.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => ProofFileDto)
+  additionalProofs?: ProofFileDto[];
+}
+
+/** One uploaded proof-of-payment file (base64 body + metadata). */
+export class ProofFileDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  fileName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  mimeType?: string;
+
+  @IsBase64()
+  contentBase64!: string;
+}
+
+/**
+ * Add one or more proof files to an existing handover/payment after the fact.
+ * Accepts either a single file (top-level fields) or an array via `proofs` —
+ * the service normalises both into one list.
+ */
+export class AddProofsDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => ProofFileDto)
+  proofs?: ProofFileDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  fileName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  mimeType?: string;
+
+  @IsOptional()
+  @IsBase64()
+  contentBase64?: string;
 }
 
 export class UpdateFinanceHandoverDto {

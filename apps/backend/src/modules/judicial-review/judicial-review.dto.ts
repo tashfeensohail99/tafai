@@ -842,6 +842,34 @@ export class EscalateCaseDto {
   decisionCommunicatedNote?: string;
 }
 
+/**
+ * POST /jr/matters/transfer-from-processing/:caseId — MOVE a mis-routed
+ * JR_RESUBMISSION ProcessingCase into a JrMatter and retire it from Processing.
+ * Same fields as EscalateCaseDto but ALL optional: the transfer defaults
+ * decisionMaker/applicationType (exactly like the finance→JR path) and can seed
+ * the clock anchor from the case, so the JR team completes intake.
+ */
+export class TransferMisroutedCaseDto {
+  @IsOptional()
+  @IsEnum(JrDecisionMaker)
+  decisionMaker?: JrDecisionMaker;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  applicationType?: string;
+
+  @IsOptional()
+  @IsDateString()
+  decisionCommunicatedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decisionCommunicatedNote?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Settlement + successor-matter chain + carried evidence (PR 6). Every property
 // is decorated — the global ValidationPipe runs forbidNonWhitelisted, so an

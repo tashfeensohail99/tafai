@@ -419,6 +419,29 @@ export function fetchProcessingCase(caseId: string): Promise<ApiProcessingCaseDe
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}`, { cache: 'no-store' });
 }
 
+/**
+ * Move a mis-routed Judicial-Review case (service JR_RESUBMISSION) out of
+ * Processing and into a JR matter. Hits the JR intake controller
+ * (POST /jr/matters/transfer-from-processing/:caseId — requires jr.matter.create),
+ * which opens the matter and retires this case to CANCELLED in one transaction.
+ * All body fields are optional; the JR team completes intake afterwards. Returns
+ * the raw JrMatter row (at least matterNumber) so the UI can confirm.
+ */
+export function transferCaseToJr(
+  caseId: string,
+  body: {
+    decisionMaker?: string;
+    applicationType?: string;
+    decisionCommunicatedAt?: string;
+    decisionCommunicatedNote?: string;
+  } = {},
+): Promise<{ id: string; matterNumber: string; [key: string]: unknown }> {
+  return apiFetch<{ id: string; matterNumber: string; [key: string]: unknown }>(
+    `/jr/matters/transfer-from-processing/${caseId}`,
+    { method: 'POST', body: JSON.stringify(body), cache: 'no-store' },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Refund / Escalation lane (workflow doc: when authority REJECTS, processing
 // either refunds the client or escalates to APPEAL_IN_PROGRESS — both flows

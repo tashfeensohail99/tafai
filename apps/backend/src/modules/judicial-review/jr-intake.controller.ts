@@ -6,7 +6,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { JrIntakeService } from './jr-intake.service';
-import { CreateExternalMatterDto, EscalateCaseDto } from './judicial-review.dto';
+import {
+  CreateExternalMatterDto,
+  EscalateCaseDto,
+  TransferMisroutedCaseDto,
+} from './judicial-review.dto';
 
 /**
  * JR intake (§11.1). Shares the `jr/matters` base with JudicialReviewController:
@@ -39,5 +43,22 @@ export class JrIntakeController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.intake.escalateFromCase(caseId, dto, user);
+  }
+
+  /**
+   * Move a mis-routed JR_RESUBMISSION ProcessingCase into a JrMatter and retire
+   * it from Processing. Like from-case the audited entity is the ProcessingCase
+   * being acted on (idParam=caseId); the created matter is recorded separately in
+   * JrAuditLog (action matter_created).
+   */
+  @Post('transfer-from-processing/:caseId')
+  @RequirePermissions('jr.matter.create')
+  @Audit({ idParam: 'caseId', entityType: 'ProcessingCase', category: 'MUTATION', severity: 'HIGH' })
+  transferFromProcessing(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: TransferMisroutedCaseDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.intake.transferMisroutedCase(caseId, dto, user);
   }
 }

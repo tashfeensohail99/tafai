@@ -11,7 +11,11 @@ import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { LeadsService } from '../leads/leads.service';
 import { resolveHandoverService } from '../finance/handover-service.util';
-import { CreateExternalMatterDto, EscalateCaseDto } from './judicial-review.dto';
+import {
+  CreateExternalMatterDto,
+  EscalateCaseDto,
+  TransferMisroutedCaseDto,
+} from './judicial-review.dto';
 import { CURRENT_DEADLINE_RULE_SET_VERSION, toLegalDateUtc } from './jr-deadline-engine';
 
 /**
@@ -252,6 +256,153 @@ export class JrIntakeService {
           intakeType: 'INTERNAL',
           originCaseId: kase.id,
           originalFilerUserId: kase.assignedOfficerId ?? null,
+        },
+      });
+      return matter;
+    });
+  }
+
+  /**
+   * MOVE a mis-routed Judicial-Review case out of Processing into a JrMatter.
+   *
+   * Context: before createFromHandover existed, a paid JR_RESUBMISSION agreement
+   * handed to Finance was routed into a ProcessingCase like any other service —
+   * which is the wrong department for it. This retires such a case from the
+   * Processing queue and opens the JR matter the file should have been all along.
+   *
+   * This is NOT escalateFromCase: that path is for one of our OWN refused cases
+   * (a genuine refusal we escalate for conflict review). This path is a routing
+   * CORRECTION for a case whose SERVICE is already JR — so it only accepts cases
+   * with `service === 'JR_RESUBMISSION'` and does NOT force conflict review
+   * (unlike an INTERNAL refusal escalation; the SAFE bucket this is used on has
+   * no assigned officer, and a forced review with a null original filer would be
+   * a dead file — see escalateFromCase's officer guard).
+   *
+   * The matter is created in its INTAKE stage (so the JR team completes intake)
+   * and the ProcessingCase is retired IN THE SAME TRANSACTION to CANCELLED (the
+   * least-destructive existing terminal stage — it keeps the row, its history and
+   * audit, and every Processing "active" count filters on `cancelledAt: null`, so
+   * stamping cancelledAt is what actually removes it from the active queue). The
+   * case is never hard-deleted.
+   *
+   * Idempotent: rejects if a JrMatter already exists for this originCaseId (the
+   * same check-then-create dedup escalateFromCase uses; there is no DB unique
+   * index on originCaseId — that would be a migration).
+   */
+  async transferMisroutedCase(
+    caseId: string,
+    dto: TransferMisroutedCaseDto,
+    user: RequestUser,
+  ): Promise<JrMatter> {
+    // 1. The case must exist.
+    const kase = await this.prisma.processingCase.findFirst({ where: { id: caseId } });
+    if (!kase) throw new NotFoundException('Processing case not found.');
+
+    // 2. This path is ONLY for JR-service cases mis-routed into Processing. A
+    //    refused NON-JR case that needs the Federal Court uses escalateFromCase.
+    if (kase.service !== 'JR_RESUBMISSION') {
+      throw new UnprocessableEntityException(
+        `This case's service is "${kase.service}", not JR_RESUBMISSION — "Send to JR" only moves ` +
+          'a mis-routed Judicial Review case. A refused non-JR case is escalated via from-case instead.',
+      );
+    }
+
+    // 3. One JR matter per case. Check-then-create (same residual race as
+    //    escalateFromCase — deliberate for v1; a DB unique index is a migration).
+    if (await this.prisma.jrMatter.findFirst({ where: { originCaseId: caseId } })) {
+      throw new ConflictException('This case has already been sent to a JR matter.');
+    }
+
+    // 4. Mint the matter number (NumberingService is not tx-aware — before the tx).
+    const matterNumber = await this.numbering.next('JR');
+
+    // 5. Write the matter, seed the provenance note + audit, and retire the case
+    //    atomically.
+    return this.prisma.$transaction(async (tx) => {
+      const matter = await tx.jrMatter.create({
+        data: {
+          matterNumber,
+          clientId: kase.clientId,
+          leadId: kase.leadId,
+          branchId: kase.branchId ?? null,
+          // Mirror escalateFromCase's internal-origin shape: the matter carries
+          // the originating case + its officer as the original filer. Conflict
+          // review is NOT forced (this is a routing fix, not a refusal); the
+          // field defaults false.
+          intakeType: 'INTERNAL',
+          originCaseId: kase.id,
+          originalFilerUserId: kase.assignedOfficerId ?? null,
+          // decisionMaker / applicationType: accept the caller's values when
+          // given; otherwise default EXACTLY as createFromHandover does for a
+          // JR_RESUBMISSION matter (the going-forward correct path).
+          decisionMaker: dto.decisionMaker ?? 'OTHER',
+          applicationType: dto.applicationType ?? 'Judicial Review',
+          deadlineRuleSetVersion: CURRENT_DEADLINE_RULE_SET_VERSION,
+          createdByUserId: user.id,
+          // The ALJR clock anchor: prefer the caller's real notification date;
+          // otherwise seed a DRAFT from the case's authority-decision date (same
+          // pattern + wording as escalateFromCase). If neither exists the anchor
+          // stays null and the Head sets it later via updateMatter (INTAKE→
+          // ROUTE_DETERMINED is blocked until it is supplied).
+          decisionCommunicatedAt: dto.decisionCommunicatedAt
+            ? toLegalDateUtc(dto.decisionCommunicatedAt)
+            : kase.authorityDecisionDate
+              ? toLegalDateUtc(kase.authorityDecisionDate.toISOString())
+              : null,
+          decisionCommunicatedNote:
+            dto.decisionCommunicatedNote ??
+            (dto.decisionCommunicatedAt
+              ? null
+              : 'DRAFT — seeded from ProcessingCase.authorityDecisionDate; VERIFY against the refusal email (the authority decision date is when the officer decided, not when the client was notified).'),
+        },
+      });
+
+      // Retire the ProcessingCase — stage CANCELLED + stamp cancelledAt (what the
+      // active-queue counts filter on) + a human-readable reason. The row, its
+      // stage history and audit are preserved; it is never hard-deleted.
+      const retireReason = `Transferred to JR matter ${matterNumber}`;
+      await tx.processingCase.update({
+        where: { id: kase.id },
+        data: {
+          stage: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancellationReason: retireReason,
+          updatedByUserId: user.id,
+        },
+      });
+      await tx.processingCaseStageHistory.create({
+        data: {
+          caseId: kase.id,
+          fromStage: kase.stage,
+          toStage: 'CANCELLED',
+          changedByUserId: user.id,
+          reason: retireReason,
+          notes: `${retireReason} (service JR_RESUBMISSION mis-routed into Processing).`,
+        },
+      });
+
+      await tx.jrNote.create({
+        data: {
+          matterId: matter.id,
+          authorUserId: user.id,
+          content: `Transferred from processing case ${kase.id} (service JR_RESUBMISSION, mis-routed). ${
+            dto.decisionCommunicatedAt
+              ? ''
+              : 'Set the decision/refusal date to start the filing clock.'
+          }`.trim(),
+        },
+      });
+      await this.writeMatterAudit(tx, {
+        matterId: matter.id,
+        actorUserId: user.id,
+        action: 'matter_created',
+        entityId: matter.id,
+        newValues: {
+          intakeType: 'INTERNAL',
+          matterNumber,
+          originCaseId: kase.id,
+          retiredCaseStage: 'CANCELLED',
+          transfer: 'misrouted_jr_from_processing',
         },
       });
       return matter;

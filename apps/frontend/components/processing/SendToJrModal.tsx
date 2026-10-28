@@ -57,6 +57,10 @@ export function SendToJrModal({ caseRecord: c, onClose, onTransferred }: SendToJ
   const [matterNumber, setMatterNumber] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // A case whose service isn't already JR_RESUBMISSION is being RECLASSIFIED as
+  // Judicial Review (a sales mis-label) on the way to JR — reflect that in the copy.
+  const reclassifying = c.service !== 'JR_RESUBMISSION';
+
   async function handleTransfer() {
     if (loading) return;
     setLoading(true);
@@ -154,10 +158,22 @@ export function SendToJrModal({ caseRecord: c, onClose, onTransferred }: SendToJ
         {/* Explanation banner */}
         <GlassCard variant="panel" padded="md" style={{ marginBottom: '18px' }}>
           <div style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.55' }}>
-            This is a Judicial Review case that was routed into Processing by mistake. Sending it to
-            JR <strong>moves it to the Judicial Review department</strong> as a new matter and{' '}
-            <strong>closes it here in Processing</strong> (it stays visible in history). The JR team
-            completes the legal intake — the fields below are optional and can be set later there.
+            {reclassifying ? (
+              <>
+                This case is currently filed as <strong>{c.service}</strong>, but it is a Judicial
+                Review matter. Sending it to JR <strong>reclassifies it as Judicial Review</strong>,{' '}
+                <strong>moves it to the JR department</strong> as a new matter, and{' '}
+                <strong>closes it here in Processing</strong> (it stays visible in history). The JR
+                team completes the legal intake — the fields below are optional and can be set later.
+              </>
+            ) : (
+              <>
+                This is a Judicial Review case that was routed into Processing by mistake. Sending it
+                to JR <strong>moves it to the Judicial Review department</strong> as a new matter and{' '}
+                <strong>closes it here in Processing</strong> (it stays visible in history). The JR
+                team completes the legal intake — the fields below are optional and can be set later.
+              </>
+            )}
           </div>
         </GlassCard>
 

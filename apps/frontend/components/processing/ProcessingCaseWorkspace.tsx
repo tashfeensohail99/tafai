@@ -634,21 +634,21 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
                 <CheckCircle2 size={13} /> Close case
               </button>
             ) : null}
-            {/* Send to JR — ONLY for a Judicial-Review case (service
-                JR_RESUBMISSION) mis-routed into Processing. Moves it to the JR
-                department and closes it here. Hidden once the case is terminal
-                (after a transfer it becomes CANCELLED, so the button clears);
-                the backend also hard-dedupes on an existing JR matter. Needs
-                jr.matter.create. */}
+            {/* Send to JR — available on ANY live case for a user with
+                jr.matter.create. Sales often mis-labels a Judicial-Review file
+                (visit-visa, work-permit, …); this lets Processing send it to JR,
+                reclassifying it on the way. Moves it to the JR department and
+                closes it here. Hidden once the case is terminal (after a transfer
+                it becomes CANCELLED, so the button clears); the backend also
+                hard-dedupes on an existing JR matter. */}
             {canSendToJr &&
-            c.service === 'JR_RESUBMISSION' &&
             c.stage !== 'CANCELLED' &&
             c.stage !== 'COMPLETED' &&
             c.stage !== 'JUNK' ? (
               <button
                 type="button"
                 onClick={() => setShowSendToJrModal(true)}
-                title="This is a Judicial Review case — move it to the JR department and close it here"
+                title="Move this case to the Judicial Review department and close it here"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-brand-primary-border, var(--sos-border-default))', background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
               >
                 <Scale size={13} /> Send to JR

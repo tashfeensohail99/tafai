@@ -298,14 +298,21 @@ export class JrIntakeService {
     const kase = await this.prisma.processingCase.findFirst({ where: { id: caseId } });
     if (!kase) throw new NotFoundException('Processing case not found.');
 
-    // 2. This path is ONLY for JR-service cases mis-routed into Processing. A
-    //    refused NON-JR case that needs the Federal Court uses escalateFromCase.
-    if (kase.service !== 'JR_RESUBMISSION') {
+    // 2. Block only TERMINAL cases — a closed/cancelled file cannot be sent.
+    //    ANY LIVE case may go to JR: sales frequently mis-labels a Judicial
+    //    Review file as visit-visa, work-permit, etc., and Processing then had
+    //    no way to send it (the old guard required service===JR_RESUBMISSION).
+    //    When the service is not already JR_RESUBMISSION we RECLASSIFY it as
+    //    part of the transfer; the original service is preserved in the stage
+    //    history + audit below. (A refused non-JR case that needs the Federal
+    //    Court still has its own dedicated path: escalateFromCase.)
+    if (['CANCELLED', 'COMPLETED', 'JUNK'].includes(kase.stage)) {
       throw new UnprocessableEntityException(
-        `This case's service is "${kase.service}", not JR_RESUBMISSION — "Send to JR" only moves ` +
-          'a mis-routed Judicial Review case. A refused non-JR case is escalated via from-case instead.',
+        `This case is ${kase.stage} and cannot be sent to JR.`,
       );
     }
+    const originalService = kase.service;
+    const reclassified = originalService !== 'JR_RESUBMISSION';
 
     // 3. One JR matter per case. Check-then-create (same residual race as
     //    escalateFromCase — deliberate for v1; a DB unique index is a migration).
@@ -360,10 +367,16 @@ export class JrIntakeService {
       // Retire the ProcessingCase — stage CANCELLED + stamp cancelledAt (what the
       // active-queue counts filter on) + a human-readable reason. The row, its
       // stage history and audit are preserved; it is never hard-deleted.
-      const retireReason = `Transferred to JR matter ${matterNumber}`;
+      const retireReason = reclassified
+        ? `Transferred to JR matter ${matterNumber} (reclassified from ${originalService} — mis-labelled by sales)`
+        : `Transferred to JR matter ${matterNumber}`;
       await tx.processingCase.update({
         where: { id: kase.id },
         data: {
+          // Correct the mis-label so the retired case reads as the JR file it
+          // always was (the original service is preserved in the stage history
+          // + audit for the trail).
+          service: 'JR_RESUBMISSION',
           stage: 'CANCELLED',
           cancelledAt: new Date(),
           cancellationReason: retireReason,
@@ -377,7 +390,9 @@ export class JrIntakeService {
           toStage: 'CANCELLED',
           changedByUserId: user.id,
           reason: retireReason,
-          notes: `${retireReason} (service JR_RESUBMISSION mis-routed into Processing).`,
+          notes: reclassified
+            ? `${retireReason}. Original Processing service was "${originalService}".`
+            : `${retireReason} (service JR_RESUBMISSION mis-routed into Processing).`,
         },
       });
 
@@ -385,7 +400,9 @@ export class JrIntakeService {
         data: {
           matterId: matter.id,
           authorUserId: user.id,
-          content: `Transferred from processing case ${kase.id} (service JR_RESUBMISSION, mis-routed). ${
+          content: `Transferred from processing case ${kase.id} (original service ${originalService}${
+            reclassified ? ', reclassified to JR' : ', mis-routed'
+          }). ${
             dto.decisionCommunicatedAt
               ? ''
               : 'Set the decision/refusal date to start the filing clock.'
@@ -401,6 +418,8 @@ export class JrIntakeService {
           intakeType: 'INTERNAL',
           matterNumber,
           originCaseId: kase.id,
+          originalService,
+          reclassified,
           retiredCaseStage: 'CANCELLED',
           transfer: 'misrouted_jr_from_processing',
         },

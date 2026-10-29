@@ -39,7 +39,7 @@ export const NAME_STOPWORDS: ReadonlySet<string> = new Set((
  * them, and a span made of particles + pool tokens is never a leak.
  */
 export const NAME_PARTICLES: ReadonlySet<string> = new Set(
-  'muhammad mohammad mohammed mohd md abdul abdur hafiz syed sayed mian sardar haji hajji sahib sab bhai baba chaudhry ch rana malik mirza khawaja sheikh shaikh dr mr mrs ms miss'.split(' '),
+  'muhammad mohammad mohammed mohd md abdul abdur hafiz syed sayed mian sardar haji hajji sahib sahab sahb sb sahiba sab bhai baba begum bibi engr engineer advocate chaudhry ch rana malik mirza khawaja sheikh shaikh dr mr mrs ms miss'.split(' '),
 );
 
 export function normName(s: string): string {

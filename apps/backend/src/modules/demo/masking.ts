@@ -103,6 +103,9 @@ const PHONE_RE = /(?:\+|00)?\d(?:[\s\-.()]?\d){9,14}/g;
 // Pakistani CNIC: 5-7-1.
 const CNIC_RE = /\b\d{5}-\d{7}-\d\b/g;
 const WAMID_RE = /wamid\.[A-Za-z0-9+/=_-]+/g;
+// UUIDs inside free text / JSON (message ids, thread ids) must survive intact:
+// their digit groups would otherwise be mistaken for a phone number.
+const UUID_IN_TEXT_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 /**
  * Office landmarks that identify the real tenant even without its name
  * (spelling variants included). Replaced with the demo offices used by the
@@ -436,15 +439,23 @@ export class DemoMasker {
     let s = String(text);
     if (!s) return s;
 
+    // Park UUIDs so no later pass can touch them.
+    const uuids: string[] = [];
+    s = s.replace(UUID_IN_TEXT_RE, (m) => {
+      uuids.push(m);
+      return `\u0000U${uuids.length - 1}\u0000`;
+    });
     // Emails first so a brand domain inside an address is masked as an address.
     s = s.replace(EMAIL_RE, (m) => this.email(m) ?? m);
-    // Full "First Last" names next (most specific), then brand tokens, then
-    // single name tokens — so a staff member whose first name is also the
-    // brand ("Tashfeen Sohail" at "Tashfeen Immigration") resolves correctly.
+    // Longest real names first: a 3-word name on record ("Amir Ali Abid")
+    // must win over this row's 2-word alias ("Amir Ali") so no real token is
+    // left behind. Then full "First Last" row aliases, brand tokens, single
+    // tokens, and finally the 2-word global index.
+    if (ctx?.nameIndex?.size) s = this.replaceIndexedNames(s, ctx.nameIndex, 3);
     if (ctx?.names?.length) s = this.replaceNames(s, ctx.names, 'full');
     if (this.brandRe) s = s.replace(this.brandRe, (m) => (m.length <= 9 && this.cfg.brandShort ? this.cfg.brandShort : this.cfg.brandName));
     if (ctx?.names?.length) s = this.replaceNames(s, ctx.names, 'tokens');
-    if (ctx?.nameIndex?.size) s = this.replaceIndexedNames(s, ctx.nameIndex);
+    if (ctx?.nameIndex?.size) s = this.replaceIndexedNames(s, ctx.nameIndex, 2);
     // Catch-all for the tenant name in any other form (domains such as
     // www.tashfeenimmigrationsolutions.com, glued words, handles): nothing
     // containing a brand stem may survive.
@@ -460,6 +471,7 @@ export class DemoMasker {
       return masked ?? m;
     });
     s = s.replace(WAMID_RE, (m) => `wamid.demo${this.hex('wamid', m, 24)}`);
+    if (uuids.length) s = s.replace(/\u0000U(\d+)\u0000/g, (_m, i) => uuids[Number(i)]);
     return s;
   }
 
@@ -500,7 +512,7 @@ export class DemoMasker {
    * Replace every 2- or 3-word span whose normalised form is a known real
    * person's full name. O(len): tokens are scanned once, longest match first.
    */
-  private replaceIndexedNames(s: string, index: Map<string, PersonName>): string {
+  private replaceIndexedNames(s: string, index: Map<string, PersonName>, minSpan: 2 | 3 = 2): string {
     const tokens: Array<{ start: number; end: number; norm: string }> = [];
     const re = /[A-Za-z\u0600-\u06FF]+/g;
     let m: RegExpExecArray | null;
@@ -515,7 +527,7 @@ export class DemoMasker {
         hit = index.get(`${tokens[i].norm} ${tokens[i + 1].norm} ${tokens[i + 2].norm}`);
         if (hit) span = 3;
       }
-      if (!hit) {
+      if (!hit && minSpan <= 2) {
         hit = index.get(`${tokens[i].norm} ${tokens[i + 1].norm}`);
         if (hit) span = 2;
       }

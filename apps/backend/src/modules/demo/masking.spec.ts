@@ -168,6 +168,24 @@ describe('DemoMasker — text scrubbing', () => {
     expect(p2).not.toBe('+923001234567');
   });
 
+  it('keeps UUIDs intact inside text and JSON', () => {
+    const id = 'fabfac6b-dd30-4541-8219-fa09282a7445';
+    expect(m.scrubText(`message ${id} from +923001234567`)).toContain(id);
+    const j = m.scrubJson({ messageId: id, note: `see ${id}` }) as { messageId: string; note: string };
+    expect(j.messageId).toBe(id);
+    expect(j.note).toContain(id);
+  });
+
+  it('prefers the longest real name on record over the row alias', () => {
+    const index = new Map([
+      ['amir ali abid', { firstName: 'Usman', lastName: 'Raza' }],
+      ['ali abid', { firstName: 'Usman', lastName: 'Raza' }],
+      ['amir ali', { firstName: 'Iqra', lastName: 'Malik' }],
+    ]);
+    const rowAlias = [{ real: { firstName: 'Amir Ali', lastName: '' }, fake: { firstName: 'Iqra', lastName: 'Malik' } }];
+    expect(m.scrubText('Amir Ali abid, 28, Dubai', { names: rowAlias, nameIndex: index })).toBe('Usman Raza, 28, Dubai');
+  });
+
   it('replaces the real office landmarks', () => {
     const out = m.scrubText('Office 201, Haly Tower, DHA Phase 2 Lahore; also Hailey Tower; Islamabad: 3029B World Trade Centre, Giga Mall')!;
     expect(out).not.toMatch(/Haly|Hailey|Giga|World Trade|3029/);

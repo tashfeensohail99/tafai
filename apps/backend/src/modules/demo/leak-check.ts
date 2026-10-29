@@ -62,6 +62,7 @@ const NO_NAME_CHECK_TABLES = new Set(['ai.knowledge', 'ai.brochures', 'whatsapp.
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const DIGIT_RUN_RE = /\+?\d(?:[\s\-.()]?\d){8,14}/g;
 const CNIC_RE = /\b\d{5}-?\d{7}-?\d\b/g;
+const UUID_IN_TEXT_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 function phoneVariants(raw: string): string[] {
   const d = raw.replace(/\D/g, '');
@@ -319,6 +320,8 @@ export class DemoLeakChecker {
 
   scanText(text: string, real: { phones: Set<string>; emails: Set<string>; names: Set<string>; ids: Set<string> }, checkNames = true): Array<{ kind: LeakFinding['kind']; match: string }> {
     const hits: Array<{ kind: LeakFinding['kind']; match: string }> = [];
+    // Identifiers are never phone numbers, whatever their digit groups say.
+    text = text.replace(UUID_IN_TEXT_RE, ' ');
     for (const m of text.match(EMAIL_RE) ?? []) {
       if (real.emails.has(m.toLowerCase())) hits.push({ kind: 'email', match: m });
     }

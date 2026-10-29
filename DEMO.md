@@ -122,7 +122,22 @@ railway up --service frontend  # from apps/frontend
 ```
 
 Set-up order on a fresh database:
-1. `prisma migrate deploy` (the backend does this on boot).
+1. Schema. **`prisma migrate deploy` alone is not enough**: production's schema
+   is ahead of the migrations folder (migration `20260513000000_…` even fails on
+   an empty database, and ~80 tables / ~1,400 columns exist only via `db push`).
+   The demo database was therefore built like this (demo DB only — never run
+   any of it against production):
+   ```bash
+   # from apps/backend, DATABASE_URL/DIRECT_URL = the DEMO database
+   npx prisma migrate deploy                     # applies what it can
+   npx prisma migrate diff --from-url "$DATABASE_URL" \
+       --to-schema-datamodel prisma/schema.prisma --script > /tmp/drift.sql
+   psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f /tmp/drift.sql   # (tables must be empty)
+   for m in $(ls prisma/migrations | grep -v lock); do npx prisma migrate resolve --applied "$m"; done
+   npx prisma migrate deploy                     # → "No pending migrations" (boot is a no-op)
+   ```
+   The sync engine also adds any enum value production has that the demo lacks
+   before every run.
 2. `npm run demo:sync -- --full` (or wait for the timer / `POST /demo/admin/sync {"full":true}`).
 3. `npm run demo:seed` with `DEMO_ADMIN_PASSWORD`, `DEMO_AGENT_PASSWORD`,
    `DEMO_OPENAI_API_KEY`, `DEMO_LIVE_*` set → demo logins, OpenAI key, live-lane channel.
@@ -132,6 +147,23 @@ Running the CLIs inside the backend container: `railway ssh --service backend`
 then `node dist/modules/demo/cli/sync.js --full`, `…/seed.js`, `…/leak-check.js`.
 
 ## 4. Live lane (Meta test number)
+
+**Status: parked.** The lane is wired in code but switched off until a demo
+number exists. Exactly six values turn it on (all set on the demo backend
+service, then one `demo:seed` run):
+
+| # | Value | Where it comes from | Where it goes |
+|---|---|---|---|
+| 1 | WABA id | Meta app → WhatsApp → API Setup → *WhatsApp Business Account ID* | `DEMO_LIVE_WABA_ID` (seed) |
+| 2 | Phone number id | same page → *Phone number ID* of the test number | `DEMO_LIVE_PHONE_NUMBER_ID` (seed) **and** `DEMO_LIVE_PHONE_NUMBER_IDS` (backend) |
+| 3 | The number itself | same page → *From* | `DEMO_LIVE_DISPLAY_NUMBER` (seed + backend; shown in the banner) |
+| 4 | Permanent access token | Business Settings → System users → Generate token (`whatsapp_business_messaging`, `whatsapp_business_management`) | `DEMO_LIVE_ACCESS_TOKEN` (seed; stored encrypted) |
+| 5 | App secret | Meta app → App settings → Basic | `META_APP_SECRET` (+ `META_APP_ID`) on the backend |
+| 6 | OpenAI key for the demo | OpenAI dashboard (a separate key, never production's) | `DEMO_OPENAI_API_KEY` (seed; stored encrypted) |
+
+Then point the Meta webhook at `https://demo-api.summitautomates.com/whatsapp/webhooks/meta`
+with verify token = `META_WEBHOOK_VERIFY_TOKEN`, and **before every call add the
+prospect's phone to the test number's recipient list** (step 6 below).
 
 1. Meta for Developers → the Summit app → **WhatsApp → API Setup**. Note the
    *WhatsApp Business Account ID*, the test number's *Phone number ID* and the

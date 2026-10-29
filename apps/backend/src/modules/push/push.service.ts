@@ -49,7 +49,10 @@ export class PushService {
       tag?: string | null;
     },
   ): Promise<void> {
-    if (isDemoMode()) return; // DEMO_MODE: no push ever reaches a real device
+    if (isDemoMode()) {
+      this.log.log(`[demo] push blocked for user ${userId}`);
+      return; // DEMO_MODE: no push ever reaches a real device
+    }
     try {
       const devices = await this.prisma.deviceToken.findMany({
         where: { userId },
@@ -82,7 +85,10 @@ export class PushService {
     data: Record<string, string>,
     opts?: { ttlSeconds?: number },
   ): Promise<void> {
-    if (isDemoMode()) return; // DEMO_MODE: no push ever reaches a real device
+    if (isDemoMode()) {
+      this.log.log(`[demo] push blocked for user ${userId}`);
+      return; // DEMO_MODE: no push ever reaches a real device
+    }
     try {
       const devices = await this.prisma.deviceToken.findMany({
         where: { userId },

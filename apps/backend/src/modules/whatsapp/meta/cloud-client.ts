@@ -597,7 +597,8 @@ export class MetaCloudClient {
     if (this.demoBlocked) {
       // Synthetic accepted response with a unique id (waMessageId is UNIQUE).
       // The outbound worker stamps the row SENT and the inbox shows it; the
-      // customer never receives anything.
+      // customer never receives anything. Logged so the block is provable.
+      console.info(`[demo] blocked WhatsApp ${String(body.type ?? body.status ?? 'send')} to ${String(body.to ?? '-')} on phone_number_id ${this.phoneNumberId}`);
       return {
         messaging_product: 'whatsapp',
         contacts: typeof body.to === 'string' ? [{ input: body.to, wa_id: body.to }] : [],

@@ -89,6 +89,7 @@ export class MessengerCloudClient {
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
     if (this.demoBlocked) {
       // DEMO_MODE: never reach the Page Send API; return a synthetic accept.
+      console.info(`[demo] blocked Messenger send on page ${this.pageId}`);
       return { messaging_product: 'whatsapp', contacts: [], messages: [{ id: `m_demo-${randomUUID()}` }] } as MetaSendResponse;
     }
     try {

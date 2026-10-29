@@ -197,8 +197,22 @@ prospect's phone to the test number's recipient list** (step 6 below).
 
 ## 5. Demo logins and prospect links
 
-* `demo.admin@<DEMO_LOGIN_DOMAIN>` — full admin.
-* `demo.agent@<DEMO_LOGIN_DOMAIN>` — sales inbox agent.
+One login per role (all `@<DEMO_LOGIN_DOMAIN>`, created by `demo:seed`;
+password = `DEMO_<KEY>_PASSWORD` if set, else the seed default):
+
+| Email | Role | Workspace |
+|---|---|---|
+| `demo.admin@…` | super_admin | /admin (everything) |
+| `demo.manager@…` | admin | /admin |
+| `demo.agent@…` | sales | /sales (inbox, leads, follow-ups) — ~10% of assigned leads route here |
+| `demo.finance@…` | finance | /finance |
+| `demo.processing@…` | processing | /processing |
+| `demo.processing.manager@…` | processing_manager | /processing |
+| `demo.documentation@…` | documentation | /processing |
+| `demo.reception@…` | reception | /reception |
+| `demo.marketing@…` | marketing | /marketing |
+| `demo.hr@…` | hr | /hr |
+| `demo.jr@…` | jr_head | /jr |
 * Per-prospect links: `/admin/settings/demo` → *New prospect link* (role,
   validity in hours, optional max uses). The link
   `https://demo.<domain>/demo/enter?t=…` signs the visitor straight in; every

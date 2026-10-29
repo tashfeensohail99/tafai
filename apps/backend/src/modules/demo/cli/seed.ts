@@ -18,14 +18,7 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { isDemoMode } from '../../../common/demo-mode';
-import {
-  DEMO_ADMIN_EMPLOYEE_ID,
-  DEMO_ADMIN_USER_ID,
-  DEMO_AGENT_EMPLOYEE_ID,
-  DEMO_AGENT_USER_ID,
-  demoAdminEmail,
-  demoAgentEmail,
-} from '../demo.constants';
+import { DEMO_ACCOUNTS, demoLoginDomain } from '../demo.constants';
 
 function encrypt(plaintext: string): string {
   const hex = process.env.WHATSAPP_ENCRYPTION_KEY ?? '';
@@ -40,54 +33,30 @@ async function main(): Promise<void> {
   if (!isDemoMode() && process.env.DEMO_SEED_FORCE !== 'true') {
     throw new Error('Refusing to seed demo accounts outside DEMO_MODE=true (set DEMO_SEED_FORCE=true to override)');
   }
-  const adminPassword = process.env.DEMO_ADMIN_PASSWORD;
-  const agentPassword = process.env.DEMO_AGENT_PASSWORD;
-  if (!adminPassword || !agentPassword) throw new Error('DEMO_ADMIN_PASSWORD and DEMO_AGENT_PASSWORD are required');
-
   const prisma = new PrismaClient();
   const org = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
   if (!org) throw new Error('no organisation row — run the sync first');
-  const superAdmin = await prisma.role.findUnique({ where: { name: 'super_admin' } });
-  const admin = await prisma.role.findUnique({ where: { name: 'admin' } });
-  const sales = await prisma.role.findUnique({ where: { name: 'sales' } });
-  if (!(superAdmin ?? admin) || !sales) throw new Error('roles missing — run the sync first');
   const branch = await prisma.branch.findFirst({ orderBy: { createdAt: 'asc' } });
-  const salesDept = await prisma.department.findFirst({ where: { name: { equals: 'Sales', mode: 'insensitive' } } });
+  const departments = await prisma.department.findMany({ select: { id: true, name: true } });
+  const deptId = (name: string | null) => (name ? departments.find((d) => d.name.toLowerCase() === name.toLowerCase())?.id ?? null : null);
+  const domain = demoLoginDomain();
 
-  const accounts = [
-    {
-      userId: DEMO_ADMIN_USER_ID,
-      employeeId: DEMO_ADMIN_EMPLOYEE_ID,
-      email: demoAdminEmail(),
-      password: adminPassword,
-      roleId: (superAdmin ?? admin)!.id,
-      firstName: 'Demo',
-      lastName: 'Admin',
-      inbox: true,
-      code: 'DEMO-ADMIN',
-    },
-    {
-      userId: DEMO_AGENT_USER_ID,
-      employeeId: DEMO_AGENT_EMPLOYEE_ID,
-      email: demoAgentEmail(),
-      password: agentPassword,
-      roleId: sales.id,
-      firstName: 'Demo',
-      lastName: 'Agent',
-      inbox: true,
-      code: 'DEMO-AGENT',
-    },
-  ];
-
-  for (const a of accounts) {
-    const passwordHash = await bcrypt.hash(a.password, 12);
+  for (const a of DEMO_ACCOUNTS) {
+    const role = await prisma.role.findUnique({ where: { name: a.role } });
+    if (!role) {
+      console.log(`skip ${a.emailLocal}: role ${a.role} does not exist in this database`);
+      continue;
+    }
+    const password = process.env[`DEMO_${a.key}_PASSWORD`] || a.defaultPassword;
+    const email = `${a.emailLocal}@${domain}`;
+    const passwordHash = await bcrypt.hash(password, 12);
     await prisma.userAccount.upsert({
       where: { id: a.userId },
-      create: { id: a.userId, email: a.email, passwordHash, status: 'ACTIVE', emailVerifiedAt: new Date(), mustChangePassword: false },
-      update: { email: a.email, passwordHash, status: 'ACTIVE', deletedAt: null, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null },
+      create: { id: a.userId, email, passwordHash, status: 'ACTIVE', emailVerifiedAt: new Date(), mustChangePassword: false },
+      update: { email, passwordHash, status: 'ACTIVE', deletedAt: null, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null },
     });
     await prisma.userRole.deleteMany({ where: { userId: a.userId } });
-    await prisma.userRole.create({ data: { userId: a.userId, roleId: a.roleId } });
+    await prisma.userRole.create({ data: { userId: a.userId, roleId: role.id } });
     await prisma.employee.upsert({
       where: { id: a.employeeId },
       create: {
@@ -95,9 +64,9 @@ async function main(): Promise<void> {
         userId: a.userId,
         firstName: a.firstName,
         lastName: a.lastName,
-        employeeCode: a.code,
+        employeeCode: `DEMO-${a.key}`,
         branchId: branch?.id ?? null,
-        departmentId: salesDept?.id ?? null,
+        departmentId: deptId(a.department),
         isActive: true,
         whatsappInboxMember: a.inbox,
         presenceStatus: 'ONLINE',
@@ -113,10 +82,10 @@ async function main(): Promise<void> {
         presenceStatus: 'ONLINE',
         presenceLocked: false,
         branchId: branch?.id ?? null,
-        departmentId: salesDept?.id ?? null,
+        departmentId: deptId(a.department),
       },
     });
-    console.log(`account ready: ${a.email} (${a.code})`);
+    console.log(`account ready: ${email} (${a.role})`);
   }
 
   // The demo's own OpenAI key (never the production one).

@@ -9,6 +9,7 @@ import {
   AtSign,
   BarChart3,
   Bell,
+  BellRing,
   Filter,
   Layers,
   LayoutDashboard,
@@ -82,6 +83,7 @@ const NAV: DrawerMenuItem[] = [
   { label: 'By Program', href: '/marketing/programs', icon: PieChart, caption: 'Responses per C11 / JR / Visit' },
   { label: 'Team Engagement', href: '/marketing/engagement', icon: MessageSquare, caption: 'Verified comments per rep' },
   { label: 'Social Handles', href: '/marketing/engagement/handles', icon: AtSign, caption: 'Register rep IG handles' },
+  { label: 'Post Alerts', href: '/marketing/engagement/alerts', icon: BellRing, caption: 'Nudge staff on new posts' },
   { label: 'Lead Routing', href: '/marketing/routing', icon: Split, caption: 'Islamabad / Lahore / Both' },
   { label: 'Performance', href: '/marketing/performance', icon: TrendingUp, caption: 'CPL, CTR, ROAS by ad' },
   { label: 'Conversions', href: '/marketing/conversions', icon: Filter, caption: 'Ad → lead → client funnel' },
@@ -167,7 +169,12 @@ export function MarketingShell({ children }: { children: ReactNode }) {
     const total = critical + warning;
     // The Social Handles editor needs social.engagement.manage; hide it otherwise.
     const canManageHandles = perms.includes('social.engagement.manage');
-    return NAV.filter((item) => item.href !== '/marketing/engagement/handles' || canManageHandles).map((item) =>
+    const canManageAlerts = perms.includes('social.alerts.manage');
+    return NAV.filter((item) => {
+      if (item.href === '/marketing/engagement/handles') return canManageHandles;
+      if (item.href === '/marketing/engagement/alerts') return canManageAlerts;
+      return true;
+    }).map((item) =>
       item.href === '/marketing/alerts' && total > 0 ? { ...item, badge: total } : item,
     );
   }, [alertBadge, perms]);

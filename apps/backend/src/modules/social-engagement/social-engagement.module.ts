@@ -21,6 +21,6 @@ import { SocialEngagementController } from './social-engagement.controller';
   imports: [StorageModule],
   providers: [MetaCredentialsService, SocialGraphService, SocialEngagementService, SocialSweepService],
   controllers: [SocialEngagementController],
-  exports: [SocialEngagementService],
+  exports: [SocialEngagementService, SocialGraphService],
 })
 export class SocialEngagementModule {}

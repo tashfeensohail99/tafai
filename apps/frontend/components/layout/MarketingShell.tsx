@@ -6,6 +6,7 @@ import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
 
 import {
   Activity,
+  AtSign,
   BarChart3,
   Bell,
   Filter,
@@ -14,6 +15,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PhoneIncoming,
@@ -78,6 +80,8 @@ const NAV: DrawerMenuItem[] = [
   { label: 'Leads by Rep', href: '/marketing/leads-by-rep', icon: UserCheck, caption: 'Leads received per rep' },
   { label: 'Calls', href: '/marketing/calls', icon: PhoneIncoming, caption: 'Meta-ad calls per rep' },
   { label: 'By Program', href: '/marketing/programs', icon: PieChart, caption: 'Responses per C11 / JR / Visit' },
+  { label: 'Team Engagement', href: '/marketing/engagement', icon: MessageSquare, caption: 'Verified comments per rep' },
+  { label: 'Social Handles', href: '/marketing/engagement/handles', icon: AtSign, caption: 'Register rep IG handles' },
   { label: 'Lead Routing', href: '/marketing/routing', icon: Split, caption: 'Islamabad / Lahore / Both' },
   { label: 'Performance', href: '/marketing/performance', icon: TrendingUp, caption: 'CPL, CTR, ROAS by ad' },
   { label: 'Conversions', href: '/marketing/conversions', icon: Filter, caption: 'Ad → lead → client funnel' },
@@ -156,14 +160,17 @@ export function MarketingShell({ children }: { children: ReactNode }) {
     };
   }, [session.status]);
 
+  const perms = session.status === 'authed' ? session.user.permissions : [];
   const navWithBadges = useMemo<DrawerMenuItem[]>(() => {
     const critical = alertBadge.critical;
     const warning = alertBadge.warning;
     const total = critical + warning;
-    return NAV.map((item) =>
+    // The Social Handles editor needs social.engagement.manage; hide it otherwise.
+    const canManageHandles = perms.includes('social.engagement.manage');
+    return NAV.filter((item) => item.href !== '/marketing/engagement/handles' || canManageHandles).map((item) =>
       item.href === '/marketing/alerts' && total > 0 ? { ...item, badge: total } : item,
     );
-  }, [alertBadge]);
+  }, [alertBadge, perms]);
 
   const sessionValue = useMemo<MarketingSessionContextValue | null>(() => {
     if (session.status !== 'authed') return null;

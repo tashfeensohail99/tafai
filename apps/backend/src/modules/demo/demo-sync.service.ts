@@ -61,7 +61,17 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(): Promise<void> {
-    const fullEveryMs = Math.max(5, Number(process.env.DEMO_SYNC_FULL_EVERY_MINUTES ?? 60)) * 60_000;
+    const fullEveryMs = Math.max(5, Number(process.env.DEMO_SYNC_FULL_EVERY_MINUTES ?? 360)) * 60_000;
+    if (!this.lastFullAt) {
+      // Survive restarts: the last completed full run is recorded on the target.
+      try {
+        const { target } = this.pools();
+        const row = await target.query<{ at: string | null }>(`SELECT max("finishedAt")::text AS at FROM demo_sync.runs WHERE "isFull" AND ok`);
+        if (row.rows[0]?.at) this.lastFullAt = new Date(row.rows[0].at).getTime();
+      } catch {
+        // first run ever: no state yet
+      }
+    }
     const full = Date.now() - this.lastFullAt >= fullEveryMs;
     try {
       await this.runNow({ full });

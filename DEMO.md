@@ -82,7 +82,7 @@ No secrets in this file. Values live in the Railway service variables.
 | `DEMO_SYNC_TARGET_DATABASE_URL` | Optional; defaults to `DIRECT_URL` / `DATABASE_URL` (the demo DB). |
 | `DEMO_MASK_SALT` | Secret salt. Rotating it re-keys every fake identity (run a full sync afterwards). |
 | `DEMO_SYNC_INTERVAL_MINUTES` (3) | Incremental cadence. |
-| `DEMO_SYNC_FULL_EVERY_MINUTES` (60) | Full run with pruning. |
+| `DEMO_SYNC_FULL_EVERY_MINUTES` (360) | Full run with pruning (also forced when the target has no completed full run yet). |
 | `DEMO_BRAND_NAME`, `DEMO_BRAND_SHORT`, `DEMO_EMAIL_DOMAIN`, `DEMO_BRAND_TOKENS`, `DEMO_DEFAULT_COUNTRY` | Masker config (defaults: Summit Immigration Consultants / `summit-demo.example` / PK). |
 | `DEMO_STAFF_KEEP` | Comma list of real staff emails to keep unmasked. |
 | `DEMO_STAFF_ALIASES` | JSON `{ "real@email": { "firstName": "..", "lastName": "..", "email": ".." } }`. |

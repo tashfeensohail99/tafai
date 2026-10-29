@@ -108,7 +108,12 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
       })
       .then((res) => {
         this.lastResult = res;
-        if (opts.full && !opts.tables && !opts.limit && !opts.dryRun) this.lastFullAt = Date.now();
+        if (opts.full && !opts.tables && !opts.limit && !opts.dryRun) {
+          this.lastFullAt = Date.now();
+          // Every full run is followed by a leak check; its verdict is stored
+          // with the run so the proof survives restarts (and shows in the UI).
+          setTimeout(() => void this.leakCheckAfterFullRun(), 1000);
+        }
         const totals = res.tables.reduce((a, t) => ({ read: a.read + t.read, written: a.written + t.written, pruned: a.pruned + t.pruned }), { read: 0, written: 0, pruned: 0 });
         this.log.log(`demo sync ${res.ok ? 'ok' : 'FINISHED WITH ERRORS'}: read=${totals.read} written=${totals.written} pruned=${totals.pruned} in ${Date.now() - started}ms`);
         return res;
@@ -117,6 +122,19 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
         this.running = null;
       });
     return this.running;
+  }
+
+  private async leakCheckAfterFullRun(): Promise<void> {
+    try {
+      const report = await this.leakCheck();
+      const { target } = this.pools();
+      await target.query(
+        `UPDATE demo_sync.runs SET summary = summary || $1::jsonb WHERE id = (SELECT max(id) FROM demo_sync.runs WHERE "isFull")`,
+        [JSON.stringify({ leakCheck: { ok: report.ok, totalHits: report.totalHits, scannedRows: report.scannedRows, at: new Date().toISOString(), findings: report.findings.slice(0, 50) } })],
+      );
+    } catch (err) {
+      this.log.error(`post-sync leak check failed: ${(err as Error).message}`);
+    }
   }
 
   async leakCheck(): Promise<LeakReport> {
@@ -150,7 +168,7 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
       try {
         const { target } = this.pools();
         state = (await target.query(`SELECT * FROM demo_sync.state ORDER BY "table"`)).rows;
-        recentRuns = (await target.query(`SELECT id, "startedAt", "finishedAt", "isFull", ok FROM demo_sync.runs ORDER BY id DESC LIMIT 20`)).rows;
+        recentRuns = (await target.query(`SELECT id, "startedAt", "finishedAt", "isFull", ok, summary->'leakCheck' AS "leakCheck" FROM demo_sync.runs ORDER BY id DESC LIMIT 20`)).rows;
       } catch {
         // state tables appear after the first run
       }

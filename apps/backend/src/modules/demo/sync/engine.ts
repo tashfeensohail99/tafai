@@ -343,17 +343,13 @@ export class DemoSyncEngine {
         log(`${rule.table}: skip row ${JSON.stringify(meta.pk.map((c) => rows[0][c]))}: ${message.split('\n')[0]}`);
         return { written: 0, skipped: 1 };
       }
-      // A batch failed (typically an FK to a row that arrived mid-run). Fall
-      // back to row-by-row so one bad row doesn't block the rest; the
-      // overlapping watermark re-copies it next run.
-      let written = 0;
-      let skipped = 0;
-      for (const r of rows) {
-        const one = await this.upsert(meta, rule, [r], log);
-        written += one.written;
-        skipped += one.skipped;
-      }
-      return { written, skipped };
+      // A batch failed (typically an FK to a row that arrived mid-run). Split
+      // it in half and retry so one bad row costs O(log n) statements instead
+      // of n; the overlapping watermark re-copies the skipped row next run.
+      const mid = Math.ceil(rows.length / 2);
+      const a = await this.upsert(meta, rule, rows.slice(0, mid), log);
+      const b = await this.upsert(meta, rule, rows.slice(mid), log);
+      return { written: a.written + b.written, skipped: a.skipped + b.skipped };
     }
   }
 

@@ -57,9 +57,9 @@ export interface MaskingConfig {
 }
 
 export const DEFAULT_MASKING_CONFIG: Omit<MaskingConfig, 'salt'> = {
-  brandName: 'Northstar Immigration Consultants',
-  brandShort: 'Northstar Immigration',
-  emailDomain: 'northstar-demo.example',
+  brandName: 'Summit Immigration Consultants',
+  brandShort: 'Summit Immigration',
+  emailDomain: 'summit-demo.example',
   brandTokens: [
     'Tashfeen Immigration Solutions',
     'Tashfeen Immigration',

@@ -96,7 +96,7 @@ export function useDemoMode(): boolean {
   return useRuntimeConfig().demoMode;
 }
 
-/** Brand text for sidebars / login (short form, e.g. "Northstar Immigration"). */
+/** Brand text for sidebars / login (short form, e.g. "Summit Immigration"). */
 export function useBrand(): { name: string; shortName: string; word: string } {
   const c = useRuntimeConfig();
   return { name: c.brandName, shortName: c.brandShortName, word: c.brandShortName.split(' ')[0] || c.brandName };

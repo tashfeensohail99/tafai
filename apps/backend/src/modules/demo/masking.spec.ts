@@ -80,7 +80,7 @@ describe('DemoMasker — identities', () => {
     const c = m.email('other@yahoo.com')!;
     expect(a).toBe(b);
     expect(a).not.toBe(c);
-    expect(a.endsWith('@northstar-demo.example')).toBe(true);
+    expect(a.endsWith('@summit-demo.example')).toBe(true);
     expect(a).not.toMatch(/gmail/);
     expect(m.email(a)).toBe(a);
     expect(m.email('not an email')).toBe('not an email');
@@ -108,7 +108,7 @@ describe('DemoMasker — identities', () => {
     expect(s.staffEmail('rep@example.com', 'id2')).toBe('dana@demo.example');
     const other = s.staff('someone@example.com', 'id3');
     expect(other).not.toBeNull();
-    expect(s.staffEmail('someone@example.com', 'id3')).toMatch(/@northstar-demo\.example$/);
+    expect(s.staffEmail('someone@example.com', 'id3')).toMatch(/@summit-demo\.example$/);
   });
 
   it('ids, dates, addresses, secrets, file names', () => {
@@ -138,10 +138,10 @@ describe('DemoMasker — text scrubbing', () => {
     const out = m.scrubText(text, { names })!;
     expect(out).not.toMatch(/Qadri|QADRI|Muhammad|1234567|7654321|gmail|35202|Tashfeen|tashfeengroup|HBgMOTIz/);
     expect(out).toMatch(/Hamza Baig/);
-    expect(out).toMatch(/Northstar Immigration Consultants/);
+    expect(out).toMatch(/Summit Immigration Consultants/);
     expect(out).toMatch(/HAMZA|BAIG/); // case-matched token replacement
     expect(out).toMatch(/\+92 3\d{2} \d{7}/); // phone layout preserved
-    expect(out).toMatch(/@northstar-demo\.example/);
+    expect(out).toMatch(/@summit-demo\.example/);
     expect(out).toMatch(/wamid\.demo[0-9a-f]{24}/);
   });
 

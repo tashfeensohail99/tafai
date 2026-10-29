@@ -68,7 +68,7 @@ No secrets in this file. Values live in the Railway service variables.
 | `DEMO_MODE=true` | Blocks every outbound send (WhatsApp, Messenger, email, push); exposes `demoMode` on `GET /config`; enables `/demo/access/redeem`. |
 | `DEMO_LIVE_PHONE_NUMBER_IDS` | Comma list of Meta `phone_number_id`s allowed to send (the live lane). Everything else is blocked even in demo. |
 | `DEMO_LIVE_DISPLAY_NUMBER` | The demo number as shown to prospects (banner text). |
-| `BRAND_NAME`, `BRAND_SHORT_NAME` | Brand used by the AI prompts / WhatsApp copy (e.g. "Northstar Immigration Consultants"). |
+| `BRAND_NAME`, `BRAND_SHORT_NAME` | Brand used by the AI prompts / WhatsApp copy (e.g. "Summit Immigration Consultants"). |
 | `DEMO_LOGIN_DOMAIN` | Domain of the demo logins (`demo.admin@…`, `demo.agent@…`). |
 | `DEMO_ADMIN_PASSWORD`, `DEMO_AGENT_PASSWORD` | Only needed when running `demo:seed`. |
 | `DEMO_OPENAI_API_KEY` | Only for `demo:seed`: stored encrypted in the demo DB as the active OpenAI key. |
@@ -83,7 +83,7 @@ No secrets in this file. Values live in the Railway service variables.
 | `DEMO_MASK_SALT` | Secret salt. Rotating it re-keys every fake identity (run a full sync afterwards). |
 | `DEMO_SYNC_INTERVAL_MINUTES` (3) | Incremental cadence. |
 | `DEMO_SYNC_FULL_EVERY_MINUTES` (60) | Full run with pruning. |
-| `DEMO_BRAND_NAME`, `DEMO_BRAND_SHORT`, `DEMO_EMAIL_DOMAIN`, `DEMO_BRAND_TOKENS`, `DEMO_DEFAULT_COUNTRY` | Masker config (defaults: Northstar Immigration Consultants / `northstar-demo.example` / PK). |
+| `DEMO_BRAND_NAME`, `DEMO_BRAND_SHORT`, `DEMO_EMAIL_DOMAIN`, `DEMO_BRAND_TOKENS`, `DEMO_DEFAULT_COUNTRY` | Masker config (defaults: Summit Immigration Consultants / `summit-demo.example` / PK). |
 | `DEMO_STAFF_KEEP` | Comma list of real staff emails to keep unmasked. |
 | `DEMO_STAFF_ALIASES` | JSON `{ "real@email": { "firstName": "..", "lastName": "..", "email": ".." } }`. |
 | `DEMO_PROTECTED_USER_IDS` | Extra user ids never pruned (the demo admin/agent ids are built in). |
@@ -102,7 +102,7 @@ SMTP / storage / Supabase / doc-parser variables are intentionally unset.
 
 ### Frontend (build args of `apps/frontend/Dockerfile`)
 `NEXT_PUBLIC_API_URL=https://demo-api.<domain>`,
-`NEXT_PUBLIC_BRAND_NAME="Northstar Immigration Consultants"`,
+`NEXT_PUBLIC_BRAND_NAME="Summit Immigration Consultants"`,
 `NEXT_PUBLIC_DEMO_MODE=true` (the banner also switches on from `/config` at runtime).
 
 ## 3. Deployment (Railway project `tafai-demo`)

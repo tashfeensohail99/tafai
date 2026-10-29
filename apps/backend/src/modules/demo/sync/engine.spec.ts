@@ -129,7 +129,7 @@ beforeAll(async () => {
   // Demo-native rows in the TARGET that must survive pruning: a live-lane
   // channel with its thread + lead, and the demo admin login.
   await dst.query(`
-    INSERT INTO core.user_accounts (id, email, "passwordHash") VALUES ('user-demo-admin', 'demo.admin@northstar-demo.example', '$2b$12$demo');
+    INSERT INTO core.user_accounts (id, email, "passwordHash") VALUES ('user-demo-admin', 'demo.admin@summit-demo.example', '$2b$12$demo');
     INSERT INTO whatsapp.channels (id, label, "wabaId", "phoneNumberId", "displayNumber", "accessTokenEnc")
     VALUES ('ch-live', 'Demo live lane', 'WABA-DEMO', 'LIVE-PNID', '+15550001111', 'iv:demo:tag');
     INSERT INTO crm.leads (id, "referenceCode", "firstName", "lastName", phone) VALUES ('lead-prospect', 'DEMO-0001', 'Real', 'Prospect', '+15551234567');
@@ -168,7 +168,7 @@ describe('DemoSyncEngine (integration)', () => {
     expect(lead.phone).toMatch(/^\+923\d{9}$/);
     expect(lead.phone).not.toBe('+923001234567');
     expect(lead.alternatePhone).toMatch(/^03\d{9}$/);
-    expect(lead.email).toMatch(/@northstar-demo\.example$/);
+    expect(lead.email).toMatch(/@summit-demo\.example$/);
     expect(lead.notes).not.toMatch(/Qadri|1234567|gmail/);
     expect(lead.notes).toContain(`${lead.firstName} ${lead.lastName}`);
     expect(lead.emailVerificationToken).toBeNull();
@@ -215,7 +215,7 @@ describe('DemoSyncEngine (integration)', () => {
 
     // Staff: aliased, login locked, 2FA stripped, photo removed.
     const user = (await dst.query(`SELECT * FROM core.user_accounts WHERE id = 'user-1'`)).rows[0];
-    expect(user.email).toMatch(/@northstar-demo\.example$/);
+    expect(user.email).toMatch(/@summit-demo\.example$/);
     expect(user.passwordHash).toBe(LOCKED_PASSWORD_HASH);
     expect(user.twoFactorEnabled).toBe(false);
     expect(user.twoFactorSecret).toBeNull();
@@ -274,7 +274,7 @@ describe('DemoSyncEngine (integration)', () => {
     expect(t.read).toBeGreaterThanOrEqual(1);
     const m4 = (await dst.query(`SELECT body FROM whatsapp.messages WHERE id = 'm-4'`)).rows[0];
     expect(m4.body).not.toMatch(/Qadri|Tashfeen/);
-    expect(m4.body).toMatch(/Northstar Immigration Consultants/);
+    expect(m4.body).toMatch(/Summit Immigration Consultants/);
     const state = (await dst.query(`SELECT watermark FROM demo_sync.state WHERE "table" = 'whatsapp.messages'`)).rows[0];
     expect(state.watermark).toBeTruthy();
     // Generated column on the target was skipped but still computed.

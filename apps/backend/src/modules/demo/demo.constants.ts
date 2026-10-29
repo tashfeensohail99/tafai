@@ -11,7 +11,7 @@ export const DEMO_AGENT_EMPLOYEE_ID = '00000000-0000-4000-8000-0000000d3e02';
 export const DEMO_PROTECTED_USER_IDS = [DEMO_ADMIN_USER_ID, DEMO_AGENT_USER_ID];
 
 export function demoLoginDomain(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DEMO_LOGIN_DOMAIN?.trim() || 'northstar-demo.example';
+  return env.DEMO_LOGIN_DOMAIN?.trim() || 'summit-demo.example';
 }
 
 export function demoAdminEmail(env: NodeJS.ProcessEnv = process.env): string {

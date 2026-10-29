@@ -652,7 +652,7 @@ export function EmployeesAdminPage() {
                 <FormInput
                   type="email"
                   required
-                  placeholder="employee@tashfeen.com"
+                  placeholder="employee@company.com"
                   value={form.email}
                   onChange={(e) => setField('email', e.target.value)}
                 />

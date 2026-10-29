@@ -13,7 +13,7 @@ import { fetchPresenceDailyReport, type PresenceDailyReport } from '@/lib/whatsa
 /**
  * Admin daily presence-accountability report. Today's live Away/Offline
  * working-hours minutes + SLA penalty per agent, plus end-of-day history.
- * The same summary is emailed to admin@tashfeengroup.com at 6 PM.
+ * The same summary is emailed to the admin mailbox at 6 PM.
  */
 function fmt(mins: number): string {
   if (!mins) return '—';
@@ -59,7 +59,7 @@ export default function PresenceReportPage() {
       <PageHeader
         eyebrow="WhatsApp · Accountability"
         title="Daily presence report"
-        description="Manual Away / Offline time during working hours (9–6, Mon–Fri), and SLA penalties. Live for today; history below. Emailed to admin@tashfeengroup.com at 6 PM."
+        description="Manual Away / Offline time during working hours (9–6, Mon–Fri), and SLA penalties. Live for today; history below. Emailed to the admin mailbox at 6 PM."
       />
 
       <section style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>

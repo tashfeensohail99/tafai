@@ -251,8 +251,8 @@ export const DEMO_SYNC_RULES: TableRule[] = [
   {
     table: 'whatsapp.messages',
     mode: 'incremental',
-    fetchSize: 2000,
-    batchSize: 300,
+    fetchSize: 4000,
+    batchSize: 500,
     pruneExcludeSql: `t."channelId" IN (${LIVE_CHANNEL_IDS})`,
     columns: {
       body: text,

@@ -331,7 +331,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="sos-input"
-                placeholder="you@tashfeen.com"
+                placeholder="you@company.com"
               />
             </div>
 
@@ -433,7 +433,7 @@ export default function LoginPage() {
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}
                       className="sos-input"
-                      placeholder="you@tashfeen.com"
+                      placeholder="you@company.com"
                       autoComplete="email"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {

@@ -280,9 +280,12 @@ export class DemoSyncEngine {
 
       const masked = page.rows.map((r) => this.maskRow(rule, r, meta, people));
       if (!opts.dryRun) {
-        for (let i = 0; i < masked.length; i += batchSize) {
-          const chunk = masked.slice(i, i + batchSize);
-          const res = await this.upsert(meta, rule, chunk, log);
+        // Upsert the page's batches concurrently (bounded by the target pool
+        // size) — the round trip to a hosted database dominates, not the work.
+        const chunks: Row[][] = [];
+        for (let i = 0; i < masked.length; i += batchSize) chunks.push(masked.slice(i, i + batchSize));
+        const results = await Promise.all(chunks.map((chunk) => this.upsert(meta, rule, chunk, log)));
+        for (const res of results) {
           written += res.written;
           skipped += res.skipped;
         }

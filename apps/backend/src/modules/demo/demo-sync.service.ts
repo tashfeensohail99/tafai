@@ -75,7 +75,7 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
     this.source ??= poolFromUrl(process.env.DEMO_SYNC_SOURCE_DATABASE_URL!, { max: 3, readOnly: true, statementTimeoutMs: 600_000 });
     const targetUrl = process.env.DEMO_SYNC_TARGET_DATABASE_URL ?? process.env.DIRECT_URL ?? process.env.DATABASE_URL;
     if (!targetUrl) throw new Error('no target database url (DATABASE_URL)');
-    this.target ??= poolFromUrl(targetUrl, { max: 4 });
+    this.target ??= poolFromUrl(targetUrl, { max: 6 });
     return { source: this.source, target: this.target };
   }
 

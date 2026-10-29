@@ -92,7 +92,7 @@ export default function WhatsAppChannelsAdminPage() {
           <EmptyState
             Icon={Phone}
             title="No WhatsApp channels connected"
-            description="Connect Tashfeen's official WhatsApp Business Cloud API number to start routing leads through the inbox."
+            description="Connect your official WhatsApp Business Cloud API number to start routing leads through the inbox."
             action={
               <PrimaryButton iconLeft={<Plus size={14} />} onClick={() => setConnectOpen(true)}>
                 Connect channel
@@ -246,7 +246,7 @@ function ConnectChannelModal(props: {
   onClose: () => void;
   onConnected: () => void;
 }) {
-  const [label, setLabel] = useState('Tashfeen Main');
+  const [label, setLabel] = useState('Main number');
   const [wabaId, setWabaId] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [displayNumber, setDisplayNumber] = useState('');
@@ -256,7 +256,7 @@ function ConnectChannelModal(props: {
 
   useEffect(() => {
     if (!props.open) return;
-    setLabel('Tashfeen Main');
+    setLabel('Main number');
     setWabaId('');
     setPhoneNumberId('');
     setDisplayNumber('');
@@ -306,7 +306,7 @@ function ConnectChannelModal(props: {
         encrypted before being stored; we never display it again.
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
-        <Field label="Label" required hint="Friendly name (e.g. Tashfeen Main)">
+        <Field label="Label" required hint="Friendly name (e.g. Main number)">
           <FormInput value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field label="Display number" required hint="As shown to customers">

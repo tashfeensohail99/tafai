@@ -204,7 +204,7 @@ export function AdminAuthDeleteModal(props: {
             onChange={(e) => setAdminEmail(e.target.value)}
             type="email"
             autoComplete="off"
-            placeholder="admin@tashfeen.com"
+            placeholder="admin@company.com"
           />
         </Field>
         <Field label="Admin password" required>

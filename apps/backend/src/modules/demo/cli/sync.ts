@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   if (sourceUrl === targetUrl) throw new Error('source and target are the same database — refusing');
 
   const source = poolFromUrl(sourceUrl, { max: 3, readOnly: true, statementTimeoutMs: 600_000 });
-  const target = poolFromUrl(targetUrl, { max: 4 });
+  const target = poolFromUrl(targetUrl, { max: 6 });
   const engine = new DemoSyncEngine(source, target, maskerFromEnv(), DEMO_SYNC_RULES);
   const tables = arg('tables')?.split(',').map((s) => s.trim()).filter(Boolean);
   const limit = arg('limit') ? Number(arg('limit')) : undefined;

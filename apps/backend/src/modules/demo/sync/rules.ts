@@ -150,7 +150,9 @@ export const DEMO_SYNC_RULES: TableRule[] = [
     pruneExcludeSql: `t."phoneNumberId" = ANY($1::text[])`,
     columns: {
       label: text,
-      displayNumber: phone,
+      // A WhatsApp channel's displayNumber is a phone; a Messenger / Instagram
+      // channel's is the page name. Mask whichever it is.
+      displayNumber: { kind: 'fn', fn: (v, _r, ctx) => (v == null ? null : ctx.masker.canonicalPhone(String(v)) ? ctx.masker.phone(String(v)) : ctx.masker.scrubText(String(v), { names: ctx.names, nameIndex: ctx.nameIndex })) },
       // Never copy the production Meta token. The demo factory refuses to
       // decrypt this marker and returns a blocked client for the channel.
       accessTokenEnc: { kind: 'const', value: 'demo:blocked' },

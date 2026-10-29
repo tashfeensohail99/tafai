@@ -1356,6 +1356,17 @@ model Employee {
   // ["UK","Canada","StudentVisa","WorkPermit"].
   skills              String[]       @default([])
 
+  // --- Social-engagement handle registry -----------------------------------
+  // Reps are required to comment on the company's own FB/IG posts. We verify
+  // this via the Graph API (see docs/social-engagement-verification.md). An IG
+  // comment exposes the commenter USERNAME, so a registered IG handle makes a
+  // rep's IG comments FULLY, PASSIVELY verifiable. FB strips the author, so the
+  // two FB fields are reference-only (a rep's FB comment is text-verified via a
+  // submitted claim, never author-proven).
+  instagramHandle     String?        // normalised lowercase, no leading '@'
+  facebookProfileUrl  String?
+  facebookDisplayName String?
+
   // --- Response-SLA scoring -----------------------------------------------
   // Lifetime tallies of agent replies that landed within / outside the
   // Response-SLA window. Score% = met / (met + breached) * 100, defaulting
@@ -1392,6 +1403,8 @@ model Employee {
   // Sales rep that originally owned the lead and stays with the client
   // after conversion. Used so processing can ping the original salesperson.
   assignedClients      Client[]            @relation("ClientAssignedEmployee")
+  // Verified / claimed social-engagement records (comments on company posts).
+  socialEngagements    SocialEngagement[]  @relation("SocialEngagementEmployee")
 
   @@index([departmentId])
   @@index([branchId])
@@ -1416,6 +1429,100 @@ model PresenceDailyReport {
   @@unique([employeeId, reportDate])
   @@index([reportDate])
   @@map("presence_daily_reports")
+  @@schema("core")
+}
+
+// =============================================================================
+// SOCIAL-ENGAGEMENT VERIFICATION
+// Reps are required to comment on the company's own FB/IG posts as a work duty.
+// We verify this via the Graph API instead of eyeballing WhatsApp screenshots.
+// See docs/social-engagement-verification.md for the capability limits that
+// shape this model (IG = fully verifiable; FB = text-only; likes = unverifiable).
+// =============================================================================
+
+enum SocialPlatform {
+  INSTAGRAM
+  FACEBOOK
+
+  @@schema("core")
+}
+
+enum SocialEngagementStatus {
+  /// IG: commenter username matched a registered employee handle — proven.
+  VERIFIED
+  /// FB: the claimed comment text was found on the post, but Meta withholds the
+  /// author so we cannot prove WHICH rep wrote it.
+  TEXT_VERIFIED_AUTHOR_UNCONFIRMED
+  /// FB claim whose text was not found among the post's comments.
+  NOT_FOUND
+  /// FB claim we could not check yet (comments fetch failed) — the sweep retries.
+  PENDING
+
+  @@schema("core")
+}
+
+enum SocialEngagementSource {
+  /// Booked passively by the scheduled sweep (IG username match).
+  AUTO_SWEEP
+  /// Submitted by a rep/manager as a Facebook claim.
+  REP_CLAIM
+
+  @@schema("core")
+}
+
+/// Cache of posts seen by the sweep — powers the per-post scoreboard view and
+/// the Facebook-claim post picker. Idempotent on (platform, externalId).
+model SocialPost {
+  id         String         @id @default(uuid())
+  platform   SocialPlatform
+  /// FB Page id, or the IG business-account id the media belongs to.
+  pageId     String
+  /// FB post id or IG media id.
+  externalId String
+  permalink  String?
+  /// FB message / IG caption, truncated for display.
+  caption    String?
+  postedAt   DateTime?
+  lastSweptAt DateTime      @default(now())
+  createdAt  DateTime       @default(now())
+
+  @@unique([platform, externalId])
+  @@index([platform, postedAt])
+  @@map("social_posts")
+  @@schema("core")
+}
+
+/// One verified or claimed engagement = the proof that a rep commented on a
+/// company post. The raw comment id + timestamp are stored verbatim as evidence.
+model SocialEngagement {
+  id               String                 @id @default(uuid())
+  employeeId       String
+  platform         SocialPlatform
+  status           SocialEngagementStatus
+  source           SocialEngagementSource
+  /// The post/media the comment lives on.
+  postExternalId   String
+  postUrl          String?
+  /// The matched comment id (NULL for a NOT_FOUND/PENDING claim). Also the
+  /// idempotency key for the sweep — a comment is never double-credited.
+  commentExternalId String?
+  commentText      String?
+  commentedAt      DateTime?
+  /// Optional screenshot attached to a Facebook claim (secondary evidence only).
+  screenshotKey    String?
+  /// UserAccount id of whoever submitted a claim (NULL for auto-sweep rows).
+  claimedByUserId  String?
+  note             String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  employee         Employee               @relation("SocialEngagementEmployee", fields: [employeeId], references: [id])
+
+  @@unique([platform, commentExternalId])
+  @@index([employeeId, createdAt])
+  @@index([platform, status])
+  @@index([postExternalId])
+  @@map("social_engagements")
   @@schema("core")
 }
 

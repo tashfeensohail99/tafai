@@ -30,6 +30,7 @@ import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
 import { LeadCapsModule } from './modules/lead-caps/lead-caps.module';
 import { MetaAdsModule } from './modules/meta-ads/meta-ads.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
+import { SocialEngagementModule } from './modules/social-engagement/social-engagement.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
@@ -99,6 +100,7 @@ import { JudicialReviewModule } from './modules/judicial-review/judicial-review.
     MetaLeadsModule,
     MetaAdsModule,
     MarketingModule,
+    SocialEngagementModule,
     ReportingModule,
     ClientsModule,
     AppointmentsModule,

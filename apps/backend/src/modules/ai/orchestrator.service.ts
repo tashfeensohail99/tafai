@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { brandName, brandShortName, isDemoMode } from '../../common/demo-mode';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { OpenAiService } from './openai.service';
@@ -108,15 +109,19 @@ function applyEidFloor(proposed: Date): Date {
 const OFFICE_OPEN_HOUR = 9; // 09:00
 const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
 const OFFICE_HOURS = 'Monday–Saturday, 9 AM–6 PM (Pakistan time)';
-const OFFICE_ADDRESS =
-  'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
-const OFFICE_MAPS_URL = 'https://share.google/De1yKn2FilNfLzTTh';
+// DEMO_MODE: the sales demo must not reveal the real tenant's offices.
+const DEMO_OFFICES = isDemoMode();
+const OFFICE_ADDRESS = DEMO_OFFICES
+  ? 'Suite 4, 3rd Floor, Horizon Business Centre, Blue Area, Islamabad'
+  : 'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
+const OFFICE_MAPS_URL = DEMO_OFFICES ? 'https://maps.google.com/?q=Blue+Area+Islamabad' : 'https://share.google/De1yKn2FilNfLzTTh';
 // Lahore branch — open and staffed (opened 2026-07-10). Office-visit bookings
 // now resolve per-city via officeAddressFor() below, so a Lahore client is no
 // longer sent the Islamabad address.
-const LAHORE_OFFICE_ADDRESS =
-  'Office #201 & 202, 2nd Floor, Haly Tower, Sector R DHA Phase 2, Lahore, 54000';
-const LAHORE_OFFICE_MAPS_URL = 'https://share.google/HY79OU4AQwXBS3oRt';
+const LAHORE_OFFICE_ADDRESS = DEMO_OFFICES
+  ? 'Office 12, 2nd Floor, Crescent Plaza, Main Boulevard, Gulberg, Lahore'
+  : 'Office #201 & 202, 2nd Floor, Haly Tower, Sector R DHA Phase 2, Lahore, 54000';
+const LAHORE_OFFICE_MAPS_URL = DEMO_OFFICES ? 'https://maps.google.com/?q=Gulberg+Lahore' : 'https://share.google/HY79OU4AQwXBS3oRt';
 
 /**
  * Which office an IN-PERSON consultation is booked at. The confirmation carries
@@ -565,7 +570,7 @@ export class OrchestratorService {
     // reps ~4% of the time). agentFirstName is the live-read assignee; if the
     // lead is unassigned we drop the "I'm …" line rather than guess a name.
     if (isFirstBotReply) {
-      const lines = ['Thank you for contacting Tashfeen Immigration Solutions!', ''];
+      const lines = [`Thank you for contacting ${brandName()}!`, ''];
       if (agentFirstName) {
         lines.push(`I'm ${agentFirstName}, your Immigration Solutions Associate, and I'll be assisting you.`, '');
       }
@@ -1395,7 +1400,7 @@ export class OrchestratorService {
       ? `Write in roman-Urdu, the same way they wrote to you.`
       : `Write in English.`;
     return [
-      `You are the WhatsApp assistant for Tashfeen Immigration Solutions. A lead you were chatting with has gone quiet, and their 24-hour WhatsApp window is about to close. Write ONE brief, warm follow-up to gently re-open the conversation.`,
+      `You are the WhatsApp assistant for ${brandName()}. A lead you were chatting with has gone quiet, and their 24-hour WhatsApp window is about to close. Write ONE brief, warm follow-up to gently re-open the conversation.`,
       ``,
       `RULES:`,
       `- 1–2 short lines, at most ~2 sentences. WhatsApp-natural, not a formal letter.`,
@@ -1500,7 +1505,7 @@ export class OrchestratorService {
             ``,
           ]
         : []),
-      `You are an Immigration Solutions Associate at Tashfeen Immigration Solutions (TIS), an immigration consultancy + law firm in Islamabad. You chat with prospective clients yourself on WhatsApp — answering their questions and booking consultation calls directly with you. You ARE the consultant they'll be talking to; never defer to a separate "manager" as if it's someone else.`,
+      `You are an Immigration Solutions Associate at ${brandName()}, an immigration consultancy + law firm in Islamabad. You chat with prospective clients yourself on WhatsApp — answering their questions and booking consultation calls directly with you. You ARE the consultant they'll be talking to; never defer to a separate "manager" as if it's someone else.`,
       ``,
       `PRIMARY MISSION`,
       `Your #1 goal is booking a consultation with yourself. Answer questions enough to build trust, then move toward booking. You handle the booking AND the consultation — no "I'll get the manager to call you" handoff.`,
@@ -1555,7 +1560,7 @@ export class OrchestratorService {
       `HARD RULES (never break)`,
       `1. NEVER guarantee visa approval — say it depends on the embassy / IRCC officer.`,
       `2. NEVER invent fees, processing times, minimum funds, eligibility criteria, required documents, or ANY number/requirement not in CONTEXT. Do NOT say a program has "no minimum" or "no requirement" unless CONTEXT says so. ${confident ? '' : 'Top retrieved context similarity is LOW for this turn — do NOT answer specifics from your own knowledge. Pivot to inviting them to book a consultation call appointment so you can walk them through the exact details for their situation (ask their preferred time and suggest our hours).'}`,
-      `3. NEVER claim to be human. If asked "are you a bot?" → "I'm Tashfeen Immigration's WhatsApp assistant — I can answer your questions here and set up a consultation call to go through your case in detail."`,
+      `3. NEVER claim to be human. If asked "are you a bot?" → "I'm ${brandShortName()}'s WhatsApp assistant — I can answer your questions here and set up a consultation call to go through your case in detail."`,
       `4. NEVER ask for / repeat passport numbers, ID numbers, full credit card numbers, bank account numbers.`,
       `5. NEVER mention competitors by name.`,
       `6. If you don't know, pivot to booking. Don't make things up.`,

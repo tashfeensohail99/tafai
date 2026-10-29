@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { isDemoMode } from '../../common/demo-mode';
 
 export interface SendMailOptions {
   to: string | string[];
@@ -68,7 +69,13 @@ export class EmailService {
    */
   async sendMailResult(
     opts: SendMailOptions,
-  ): Promise<{ ok: boolean; error?: string; notConfigured?: boolean }> {
+  ): Promise<{ ok: boolean; error?: string; notConfigured?: boolean; demoBlocked?: boolean }> {
+    // DEMO_MODE: nothing ever leaves the demo box by email. Report success so
+    // callers behave exactly as in production (rows, timeline, notifications).
+    if (isDemoMode()) {
+      this.logger.log(`[demo] email blocked: "${opts.subject}" → ${String(opts.to)}`);
+      return { ok: true, demoBlocked: true };
+    }
     if (!this.enabled || !this.transporter) {
       this.logger.warn(`Email skipped (SMTP not configured): "${opts.subject}" → ${String(opts.to)}`);
       return { ok: false, notConfigured: true, error: 'SMTP is not configured (SMTP_HOST/USER/PASS are unset).' };

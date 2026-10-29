@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 // Reception / Front-Desk workspace shell — mirrors ProcessingShell / FinanceShell.
 // A reception-role user logs in and lands here; the front-desk console is the home.
 
@@ -164,7 +165,7 @@ export function ReceptionShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">Reception OS</div>
             </div>
             <button

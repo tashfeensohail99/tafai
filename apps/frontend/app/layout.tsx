@@ -3,10 +3,14 @@ import '../styles/globals.css';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { BackendWarmup } from '@/components/layout/BackendWarmup';
 import { UploadDockHost } from '@/components/databank/UploadDockHost';
+import { DemoBanner } from '@/components/layout/DemoBanner';
 
+// Brand is a build-time value so the demo image (NEXT_PUBLIC_BRAND_NAME set)
+// never shows the real tenant in the tab title; production keeps its default.
+const BRAND = process.env.NEXT_PUBLIC_BRAND_NAME || 'Tashfeen';
 export const metadata = {
-  title: 'Tashfeen – Immigration Solutions',
-  description: 'Tashfeen Immigration AI Platform',
+  title: BRAND === 'Tashfeen' ? 'Tashfeen – Immigration Solutions' : `${BRAND} – CRM`,
+  description: BRAND === 'Tashfeen' ? 'Tashfeen Immigration AI Platform' : `${BRAND} immigration CRM`,
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -22,6 +26,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <ThemeProvider>
+          <DemoBanner />
           <BackendWarmup />
           <UploadDockHost />
           {children}

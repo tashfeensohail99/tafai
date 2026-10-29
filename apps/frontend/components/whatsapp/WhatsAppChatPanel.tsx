@@ -105,6 +105,7 @@ import { QuickReplyPicker } from './QuickReplyPicker';
 import { AudioPlayer } from './AudioPlayer';
 import { fillQuickReply } from '@/lib/quick-replies';
 import { AiBotStrip } from './AiBotStrip';
+import { isDemoMediaPlaceholder } from '@/lib/runtime-config';
 
 interface Props {
   threadId: string;
@@ -3912,6 +3913,100 @@ function FormattedText({ text }: { text: string }) {
 }
 
 /** Renders image / audio / video / document / sticker media inside a message bubble. */
+/**
+ * Demo stand-in for media whose bytes were never copied from production: a
+ * blurred tile for visuals, a "voice note" card for audio (the scrubbed
+ * transcript is shown as the caption below), a generic file card for documents.
+ */
+function DemoMediaPlaceholder({
+  typeKey,
+  filename,
+}: {
+  typeKey: 'image' | 'audio' | 'video' | 'document' | 'sticker';
+  filename?: string;
+}) {
+  if (typeKey === 'audio') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: 'var(--sos-surface-muted, rgba(148,163,184,0.15))',
+          border: '1px dashed var(--sos-border)',
+          fontSize: 13,
+          color: 'var(--sos-text-muted)',
+          minWidth: 220,
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 18 }}>🎤</span>
+        <span>
+          <strong style={{ color: 'var(--sos-text-primary)' }}>Voice note</strong> · audio not kept in the demo — transcript below
+        </span>
+      </div>
+    );
+  }
+  if (typeKey === 'document') {
+    return (
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: 'var(--wa-bubble-out)',
+          border: '1px dashed var(--sos-border)',
+          fontSize: 13,
+          color: 'var(--sos-text-muted)',
+          maxWidth: 260,
+        }}
+      >
+        <FileText size={20} style={{ flexShrink: 0, opacity: 0.6 }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {filename ?? 'document'} · sample
+        </span>
+      </div>
+    );
+  }
+  const isSticker = typeKey === 'sticker';
+  return (
+    <div
+      aria-label={`${typeKey} (demo placeholder)`}
+      style={{
+        position: 'relative',
+        width: isSticker ? 120 : 240,
+        height: isSticker ? 120 : 180,
+        borderRadius: 6,
+        overflow: 'hidden',
+        background:
+          'linear-gradient(135deg, #cbd5e1 0%, #94a3b8 35%, #64748b 60%, #cbd5e1 100%)',
+        filter: 'blur(0.5px)',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          backdropFilter: 'blur(14px)',
+          WebkitBackdropFilter: 'blur(14px)',
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 12,
+          fontWeight: 600,
+          color: '#1e293b',
+          textAlign: 'center',
+          padding: 8,
+        }}
+      >
+        {typeKey === 'video' ? '🎬' : '🖼️'} {typeKey} blurred for the demo
+      </div>
+    </div>
+  );
+}
+
 function MediaBubbleContent({
   message,
   onImageClick,
@@ -3928,18 +4023,26 @@ function MediaBubbleContent({
   // pointing at the local File, so we can preview without a backend round-trip.
   const isOptimistic =
     message.id.startsWith('temp-') && (message.mediaUrl?.startsWith('blob:') ?? false);
-  const hasMedia = !!(p?.[typeKey]?.id) || !!(message.mediaUrl);
+  // Sales demo: the sync never copies media bytes — the row carries a
+  // placeholder marker instead. Render a blurred stand-in and never hit the
+  // media endpoint for it.
+  const isPlaceholder = isDemoMediaPlaceholder(message);
+  const hasMedia = !!(p?.[typeKey]?.id) || !!(message.mediaUrl) || isPlaceholder;
 
   // Only fetch from the backend for already-persisted media — skip for temp
   // bubbles since the blob URL is already in hand.
   const { blobUrl: fetchedBlobUrl, loading, error } = useMediaBlobUrl(
     message.threadId,
     message.id,
-    hasMedia && !isOptimistic,
+    hasMedia && !isOptimistic && !isPlaceholder,
   );
   const blobUrl = isOptimistic ? message.mediaUrl : fetchedBlobUrl;
 
   const filename = p?.[typeKey]?.filename ?? `${typeKey}`;
+
+  if (isPlaceholder) {
+    return <DemoMediaPlaceholder typeKey={typeKey} filename={p?.[typeKey]?.filename} />;
+  }
 
   if (!hasMedia) {
     return (

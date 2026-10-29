@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import FormData from 'form-data';
+import { randomUUID } from 'node:crypto';
 import { Agent as HttpsAgent } from 'node:https';
 
 /**
@@ -41,6 +42,13 @@ export interface MetaClientConfig {
   phoneNumberId: string;
   accessToken: string;
   baseUrl?: string;
+  /**
+   * DEMO_MODE: when true every mutating call (sends, read receipts, media
+   * upload, calls, settings) is short-circuited with a synthetic success
+   * response and NOTHING is sent to Meta. Set by the client factory for every
+   * channel that is not a live-lane number.
+   */
+  demoBlocked?: boolean;
 }
 
 export interface SendTextInput {
@@ -135,10 +143,12 @@ export class MetaCloudClient {
   // shape differs across axios v1 minors and can return undefined.
   private readonly accessToken: string;
   private readonly baseURL: string;
+  private readonly demoBlocked: boolean;
 
   constructor(cfg: MetaClientConfig) {
     this.phoneNumberId = cfg.phoneNumberId;
     this.accessToken = cfg.accessToken;
+    this.demoBlocked = !!cfg.demoBlocked;
     this.baseURL = cfg.baseUrl ?? `https://graph.facebook.com/${cfg.apiVersion}`;
     this.http = axios.create({
       baseURL: this.baseURL,
@@ -372,6 +382,7 @@ export class MetaCloudClient {
    *      the upload path only.
    */
   async uploadMedia(file: Buffer, mimeType: string, filename: string): Promise<string> {
+    if (this.demoBlocked) return `demo-media-${randomUUID()}`;
     try {
       const baseMime = mimeType.split(';')[0].trim().toLowerCase();
       const form = new FormData();
@@ -456,6 +467,7 @@ export class MetaCloudClient {
    * button (`call_icon_visibility=DEFAULT`). Idempotent on Meta's side.
    */
   async enableCalling(): Promise<Record<string, unknown>> {
+    if (this.demoBlocked) return { demoBlocked: true };
     try {
       const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/settings`, {
         calling: { status: 'ENABLED', call_icon_visibility: 'DEFAULT' },
@@ -478,6 +490,7 @@ export class MetaCloudClient {
     action: 'pre_accept' | 'accept' | 'reject' | 'terminate';
     sdpAnswer?: string;
   }): Promise<Record<string, unknown>> {
+    if (this.demoBlocked) return { demoBlocked: true, call_id: input.callId, action: input.action };
     const body: Record<string, unknown> = {
       messaging_product: 'whatsapp',
       call_id: input.callId,
@@ -534,6 +547,10 @@ export class MetaCloudClient {
     callId: string;
     raw: Record<string, unknown>;
   }> {
+    if (this.demoBlocked) {
+      const callId = `demo-call-${randomUUID()}`;
+      return { callId, raw: { demoBlocked: true, calls: [{ id: callId }] } };
+    }
     try {
       const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/calls`, {
         messaging_product: 'whatsapp',
@@ -577,6 +594,16 @@ export class MetaCloudClient {
   }
 
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
+    if (this.demoBlocked) {
+      // Synthetic accepted response with a unique id (waMessageId is UNIQUE).
+      // The outbound worker stamps the row SENT and the inbox shows it; the
+      // customer never receives anything.
+      return {
+        messaging_product: 'whatsapp',
+        contacts: typeof body.to === 'string' ? [{ input: body.to, wa_id: body.to }] : [],
+        messages: [{ id: `wamid.demo-${randomUUID()}`, message_status: 'accepted' }],
+      };
+    }
     try {
       const res = await this.http.post<MetaSendResponse>(`/${this.phoneNumberId}/messages`, body);
       return res.data;

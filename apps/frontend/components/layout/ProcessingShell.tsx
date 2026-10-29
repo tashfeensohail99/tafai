@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 // Processing workspace shell — mirrors FinanceShell pattern.
 // Sidebar with nav + live KPI panel, responsive off-canvas on mobile.
 
@@ -253,7 +254,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">Processing OS</div>
             </div>
             {/* Desktop rail toggle — collapse to an icon rail / expand back. */}

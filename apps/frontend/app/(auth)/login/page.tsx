@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { useBrand } from '@/lib/runtime-config';
 import {
   Eye,
   EyeOff,
@@ -38,6 +39,7 @@ const ROLES: Array<{
 
 export default function LoginPage() {
   const router = useRouter();
+  const brand = useBrand();
   const [role, setRole] = useState<Role>('SALES');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -114,7 +116,7 @@ export default function LoginPage() {
 
   const brandSubtext = isClientRole
     ? 'See exactly where your application stands, upload documents, and get notified the moment something needs attention.'
-    : 'Tashfeen connects sales, finance, and processing teams so every lead moves forward without anything falling through the cracks.';
+    : `${brand.word} connects sales, finance, and processing teams so every lead moves forward without anything falling through the cracks.`;
 
   const brandFeatures = isClientRole
     ? [
@@ -167,7 +169,7 @@ export default function LoginPage() {
             <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-0.01em' }}>Tashfeen</div>
+            <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-0.01em' }}>{brand.word}</div>
             <div style={{ fontSize: 11, color: 'rgb(255 255 255 / 0.55)', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
               Sales Operating System
             </div>
@@ -209,7 +211,7 @@ export default function LoginPage() {
         </div>
 
         <div style={{ fontSize: 12, color: 'rgb(255 255 255 / 0.5)' }}>
-          © {new Date().getFullYear()} Tashfeen Immigration Solutions
+          © {new Date().getFullYear()} {brand.name}
         </div>
       </aside>
 
@@ -232,7 +234,7 @@ export default function LoginPage() {
               >
                 <Sparkles className="h-4 w-4" />
               </div>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Tashfeen</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>{brand.word}</span>
             </div>
             <div className="ml-auto">
               <ThemeToggle />
@@ -485,7 +487,7 @@ export default function LoginPage() {
           </form>
 
           <p style={{ marginTop: 22, fontSize: 12, color: 'var(--sos-text-faint)', textAlign: 'center' }}>
-            Tashfeen is a closed workspace. Contact your administrator if you need access.
+            {brand.word} is a closed workspace. Contact your administrator if you need access.
           </p>
         </div>
       </section>

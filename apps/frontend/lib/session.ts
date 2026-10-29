@@ -27,7 +27,7 @@ let cachedUser: SessionUser | null = null;
 let cachedAt = 0;
 let inflight: Promise<SessionUser> | null = null;
 
-function fetchMe(): Promise<SessionUser> {
+export function fetchMe(): Promise<SessionUser> {
   // Coalesce parallel requests — if two shells mount at the same moment,
   // only one network call goes out.
   if (inflight) return inflight;

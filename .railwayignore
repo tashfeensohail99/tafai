@@ -1,0 +1,18 @@
+# Never ship local env files / backups in a Railway upload snapshot
+.env
+.env.*
+*.env.backup-*
+.env.backup-*
+.env.before-*
+.env.nvr-*
+apps/**/.env
+apps/**/.env.*
+railway-vars-dump.json
+railway-vars-out.txt
+node_modules
+**/node_modules
+apps/backend/dist
+apps/frontend/.next
+apps/mobile
+apps/face-worker
+apps/capture-service

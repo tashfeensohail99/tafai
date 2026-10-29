@@ -35,6 +35,16 @@ import { WHATSAPP_QUEUE, type MediaDownloadJob, type OutboundMessageJob } from '
 import { WhatsAppThreadsService } from './threads.service';
 import { ThreadSummaryService } from '../../ai/thread-summary.service';
 import { Audit } from '../../../common/decorators/audit.decorator';
+import { isDemoMediaPlaceholder } from '../../../common/demo-mode';
+
+/** Neutral image served for demo media placeholders (no production bytes exist). */
+const DEMO_PLACEHOLDER_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">' +
+  '<rect width="640" height="480" fill="#e2e8f0"/>' +
+  '<g fill="#94a3b8"><rect x="200" y="150" width="240" height="160" rx="12"/>' +
+  '<circle cx="260" cy="200" r="18" fill="#cbd5e1"/><path d="M220 290l60-70 40 45 30-30 70 55z" fill="#cbd5e1"/></g>' +
+  '<text x="320" y="360" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#64748b">Sample media (demo)</text>' +
+  '</svg>';
 
 class ListThreadsDto {
   @IsOptional()
@@ -662,10 +672,23 @@ export class WhatsAppThreadsController {
       throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
     }
 
-    type MediaPayload = { id?: string; mime_type?: string; filename?: string };
+    type MediaPayload = { id?: string; mime_type?: string; filename?: string; demoPlaceholder?: boolean };
     const p = message.payload as Record<string, MediaPayload> | null;
     const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document' | 'sticker';
     const mediaMeta = p?.[typeKey];
+
+    // Sales demo: media bytes are never copied from production. The sync
+    // leaves a placeholder marker; serve a neutral SVG for visuals and a
+    // clear 404 for everything else so no client ever hits Meta/S3 for it.
+    if (isDemoMediaPlaceholder(message.mediaUrl) || mediaMeta?.demoPlaceholder) {
+      if (typeKey === 'image' || typeKey === 'sticker') {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(DEMO_PLACEHOLDER_SVG);
+        return;
+      }
+      throw new HttpException('Media is not available in the demo environment', HttpStatus.NOT_FOUND);
+    }
 
     // Fast path — the media-download worker already re-hosted these bytes
     // to S3 when the inbound message arrived. `mediaUrl` either holds an S3

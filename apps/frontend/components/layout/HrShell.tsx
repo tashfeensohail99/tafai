@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 // HR workspace shell — its own module (mirrors ReceptionShell / FinanceShell).
 // An `hr`-role user logs in and lands here; admins can also reach it.
 
@@ -112,7 +113,7 @@ export function HrShell({ children }: { children: ReactNode }) {
           <div className="sos-sidebar__brand">
             <div className="sos-sidebar__brand-logo"><IdCard size={18} /></div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">HR</div>
             </div>
             <button type="button" className="sos-rail-toggle" onClick={toggleRail}

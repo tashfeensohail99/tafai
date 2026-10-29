@@ -163,6 +163,54 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  /**
+   * Open a session for a user WITHOUT a password — used by the sales-demo
+   * sign-in links (modules/demo). The session carries a real expiry (the
+   * link's), which `refresh()` honours, so revoking/expiring the link ends it.
+   */
+  async issueSessionForUser(
+    userId: string,
+    opts: { ipAddress?: string; userAgent?: string; sessionExpiresAt?: Date } = {},
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const user = await this.prisma.userAccount.findUnique({
+      where: { id: userId, deletedAt: null },
+      include: {
+        userRoles: {
+          include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
+        },
+      },
+    });
+    if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('Account is not active');
+    const { roles, permissions } = extractRolesAndPermissions(user);
+    const accessToken = this.jwt.sign(
+      { sub: user.id, email: user.email, roles, permissions },
+      { expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN ?? '15m') as StringValue },
+    );
+    const refreshToken = randomUUID();
+    await this.prisma.$transaction([
+      this.prisma.userAccount.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
+      this.prisma.loginSession.create({
+        data: {
+          userId: user.id,
+          refreshToken,
+          ipAddress: opts.ipAddress,
+          userAgent: opts.userAgent,
+          expiresAt: opts.sessionExpiresAt ?? new Date('2999-12-31T23:59:59Z'),
+        },
+      }),
+    ]);
+    await this.auditLog.log({
+      actorUserId: user.id,
+      action: AuditAction.USER_LOGIN,
+      entityType: 'UserAccount',
+      entityId: user.id,
+      ipAddress: opts.ipAddress,
+      userAgent: opts.userAgent,
+      metadata: { via: 'demo-access-link' },
+    });
+    return { accessToken, refreshToken };
+  }
+
   async refresh(
     dto: RefreshTokenDto,
   ): Promise<{ accessToken: string; refreshToken: string }> {
@@ -196,6 +244,13 @@ export class AuthService {
     ) {
       throw new UnauthorizedException('Invalid or revoked refresh token');
     }
+    // The ONLY time-limited sessions are the ones the sales-demo sign-in links
+    // open (issueSessionForUser with a finite expiresAt). Those must end when
+    // the link expires; permanent sessions (expiresAt pinned to 2999) are untouched.
+    const permanent = session.expiresAt.getFullYear() >= 2999;
+    if (!permanent && session.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Session expired');
+    }
 
     const { roles, permissions } = extractRolesAndPermissions(session.user);
 
@@ -214,10 +269,12 @@ export class AuthService {
     // was forcing repeated logouts (and stops the session table growing per
     // refresh). Pin expiresAt far-future so any pre-existing 7-day session also
     // becomes permanent on its next refresh — no transition logout, no backfill.
-    await this.prisma.loginSession.update({
-      where: { id: session.id },
-      data: { expiresAt: new Date('2999-12-31T23:59:59Z') },
-    });
+    if (permanent) {
+      await this.prisma.loginSession.update({
+        where: { id: session.id },
+        data: { expiresAt: new Date('2999-12-31T23:59:59Z') },
+      });
+    }
 
     return { accessToken: newAccessToken, refreshToken: session.refreshToken };
   }

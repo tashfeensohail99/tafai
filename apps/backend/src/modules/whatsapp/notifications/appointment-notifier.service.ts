@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { brandShortName } from '../../../common/demo-mode';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
@@ -376,7 +377,7 @@ export class WhatsAppAppointmentNotifierService {
     lines.push(`Meeting: ${formatMeetingModality(input)}`);
     const notesLine = input.summary?.trim() || input.notes?.trim() || null;
     if (notesLine) lines.push(`Notes: ${notesLine}`);
-    lines.push('', 'Reply here if anything changes. — Tashfeen Immigration');
+    lines.push('', `Reply here if anything changes. — ${brandShortName()}`);
     return lines.join('\n');
   }
 

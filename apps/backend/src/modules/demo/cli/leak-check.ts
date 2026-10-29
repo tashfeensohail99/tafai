@@ -10,6 +10,7 @@
  */
 import { demoLivePhoneNumberIds } from '../../../common/demo-mode';
 import { DemoLeakChecker } from '../leak-check';
+import { maskerFromEnv } from '../masking';
 import { poolFromUrl } from '../sync/engine';
 
 async function main(): Promise<void> {
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
   const checker = new DemoLeakChecker(source, target, {
     livePhoneNumberIds: demoLivePhoneNumberIds(),
     allowEmails: (process.env.DEMO_STAFF_KEEP ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    masker: process.env.DEMO_MASK_SALT ? maskerFromEnv() : undefined,
     maxFindings: Number(process.env.DEMO_LEAK_MAX_FINDINGS ?? 200),
     log: (m) => console.log(`[leak-check] ${m}`),
   });

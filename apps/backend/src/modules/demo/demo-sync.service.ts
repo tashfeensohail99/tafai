@@ -125,6 +125,7 @@ export class DemoSyncService implements OnModuleInit, OnModuleDestroy {
     const checker = new DemoLeakChecker(source, target, {
       livePhoneNumberIds: demoLivePhoneNumberIds(),
       allowEmails: keep,
+      masker: maskerFromEnv(),
       log: (m) => this.log.log(`[leak-check] ${m}`),
     });
     const report = await checker.run();

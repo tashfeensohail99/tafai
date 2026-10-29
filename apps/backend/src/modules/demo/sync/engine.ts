@@ -419,8 +419,14 @@ export class DemoSyncEngine {
         return null;
       case 'const':
         return rule.value;
-      case 'phone':
-        return m.phone(str);
+      case 'phone': {
+        const out = m.phone(str);
+        // A phone column holding a NAME (junk data) must still be masked.
+        if (out && /[A-Za-z\u0600-\u06FF]/.test(out) && !/^(meta|manual|fb|ig|psid)[-_:]/i.test(out)) {
+          return m.scrubText(out, { names: ctx.names, nameIndex: ctx.nameIndex });
+        }
+        return out;
+      }
       case 'waId':
         return str == null ? null : m.waId(str);
       case 'email':

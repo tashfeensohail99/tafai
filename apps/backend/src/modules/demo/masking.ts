@@ -371,8 +371,10 @@ export class DemoMasker {
   email(raw: string | null | undefined, personKey?: string): string | null {
     if (!raw) return raw ?? null;
     const e = String(raw).trim().toLowerCase();
-    if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return raw;
+    if (!e) return raw;
     if (e.endsWith(`@${this.cfg.emailDomain}`)) return e; // already masked
+    // Malformed addresses ("user@gmail .com", "user at gmail") still carry a
+    // real local part: mask them like any other email.
     const name = this.person(personKey ?? `email:${e}`);
     return this.emailFor(name, `email:${e}`);
   }

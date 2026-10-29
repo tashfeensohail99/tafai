@@ -33,6 +33,15 @@ export const NAME_STOPWORDS: ReadonlySet<string> = new Set((
   'thursday friday saturday sunday'
 ).split(/\s+/).filter(Boolean));
 
+/**
+ * Honorifics / name particles that precede a personal name in South-Asian
+ * usage. They are not names themselves: keys are emitted with AND without
+ * them, and a span made of particles + pool tokens is never a leak.
+ */
+export const NAME_PARTICLES: ReadonlySet<string> = new Set(
+  'muhammad mohammad mohammed mohd md abdul abdur hafiz syed sayed mian sardar haji hajji sahib sab bhai baba chaudhry ch rana malik mirza khawaja sheikh shaikh dr mr mrs ms miss'.split(' '),
+);
+
 export function normName(s: string): string {
   return s.toLowerCase().replace(/[^a-z؀-ۿ\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -53,7 +62,11 @@ export function personalNameKeys(firstName: string | null | undefined, lastName:
   const parts = f.split(' ');
   if (!parts.every(isNameToken) || !isNameToken(l)) return [];
   if (parts.length === 1 && parts[0] === l) return [];
-  const keys = [`${f} ${l}`];
-  if (parts.length > 1) keys.push(`${parts[parts.length - 1]} ${l}`);
-  return keys;
+  const keys = new Set<string>([`${f} ${l}`]);
+  if (parts.length > 1) keys.add(`${parts[parts.length - 1]} ${l}`);
+  // Without leading particles: "abdul hanan jutt" → also "hanan jutt".
+  const core = [...parts];
+  while (core.length > 1 && NAME_PARTICLES.has(core[0])) core.shift();
+  if (core.length && !(core.length === 1 && NAME_PARTICLES.has(core[0]))) keys.add(`${core.join(' ')} ${l}`);
+  return [...keys];
 }

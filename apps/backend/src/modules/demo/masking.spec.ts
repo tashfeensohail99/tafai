@@ -83,7 +83,9 @@ describe('DemoMasker — identities', () => {
     expect(a.endsWith('@summit-demo.example')).toBe(true);
     expect(a).not.toMatch(/gmail/);
     expect(m.email(a)).toBe(a);
-    expect(m.email('not an email')).toBe('not an email');
+    // malformed addresses still carry a real local part → masked too
+    expect(m.email('ui740158@gmail .com')).toMatch(/@summit-demo\.example$/);
+    expect(m.email('ui740158@gmail .com')).not.toMatch(/ui740158/);
   });
 
   it('people get plausible gendered names and a stable person key', () => {

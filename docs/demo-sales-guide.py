@@ -182,12 +182,12 @@ story.append(Paragraph('You will use the admin login for most of the call. The l
 tour = [
     ['Menu item', 'What it is', 'One line to say'],
     ['Dashboard', 'Today\'s numbers: new leads, conversations waiting, appointments, revenue.', '“This is what the owner sees at 9 am.”'],
-    ['WhatsApp (All conversations)', 'Every chat on the business number, newest first. Filters: Unread, Uncontacted, by agent, by outcome.', '“Every message your team has ever received, searchable, nothing on anyone\'s phone.”'],
+    ['WhatsApp → Chats (the sales login calls it WhatsApp Inbox)', 'Every chat on the business number, newest first. Filters: All, Unread, Uncontacted, Blocked, by outcome tag.', '“Every message your team has ever received, searchable, nothing on anyone\'s phone.”'],
     ['A conversation', 'The chat itself: customer messages, AI replies (marked), human replies, voice notes with transcripts, documents.', '“Watch how the assistant answered at 2 am and booked the consultation.”'],
     ['Leads', 'The list of people who enquired, their status, outcome tag, source (which ad), owner.', '“Every lead has an owner, a status and a reason if it was lost.”'],
     ['Appointments', 'Consultations booked by the AI or by staff, with reminders.', '“The assistant books into real availability — no double booking.”'],
     ['Sales overview', 'Per-agent numbers: leads, replies on time, conversions.', '“You see who is fast and who is slow, every day.”'],
-    ['Reports (WhatsApp report, calls)', 'Daily totals, response times, missed calls.', '“This goes to the manager\'s email every morning.”'],
+    ['WhatsApp report / Calls', 'Daily totals, response times, missed calls.', '“This goes to the manager\'s email every morning.”'],
     ['Settings → WhatsApp Team / Hours', 'Who is in the inbox rota, working hours, SLA targets.', '“You control who gets new leads and how fast they must answer.”'],
     ['Settings → Bot Knowledge', 'The facts the AI is allowed to use (fees, programs, documents).', '“The assistant only says what you have approved here.”'],
     ['Finance / Processing / Reception', 'Separate workspaces for other departments, same records.', '“Sales, finance and processing all look at the same file.”'],
@@ -203,7 +203,7 @@ story.append(Paragraph('Keep this page open during the call. Each step has what 
 story.append(step(1, 'Open the door (1 min)', 'Log in as demo.admin. Stay on the Dashboard.',
                   'A dashboard with today\'s leads, conversations, appointments and money; a yellow strip saying “Demo environment — sample data”.',
                   'This is a live copy of a working immigration CRM. Names and numbers are replaced, everything else is real: the volume, the conversations, the way the AI works.'))
-story.append(step(2, 'The inbox (2 min)', 'Sidebar → WhatsApp → All conversations. Scroll slowly. Click the “Unread” and “Uncontacted” filters.',
+story.append(step(2, 'The inbox (2 min)', 'Sidebar → WhatsApp → Chats. Scroll slowly. Click the “Unread” and “Uncontacted” filters at the top of the list.',
                   'Hundreds of WhatsApp chats with names, last message, time, owner, and outcome tags.',
                   'Every enquiry on your business number lands here. Nothing lives on a salesperson\'s personal phone, nothing is lost when someone leaves.'))
 story.append(step(3, 'A real conversation with the AI (3 min)', 'Open one of the two conversations you picked before the call. Point at the AI replies and at the “AI” strip at the top of the chat.',
@@ -218,7 +218,7 @@ story.append(step(5, 'The lead behind the chat (1 min)', 'Click the customer\'s 
 story.append(step(6, 'The manager\'s view (2 min)', 'Sidebar → Sales overview, then Settings → WhatsApp Team.',
                   'Per-agent numbers, who is online, response-time scores; the inbox rota and working hours.',
                   'You decide who receives new leads, how fast they must answer, and you see every morning who kept the promise.'))
-story.append(step(7, 'The rep\'s view (1 min)', 'Switch to the second tab (demo.agent).',
+story.append(step(7, 'The rep\'s view (1 min)', 'Switch to the second tab (demo.agent) and open WhatsApp Inbox.',
                   'A simpler screen: only this agent\'s conversations, follow-ups due today, their own numbers.',
                   'Your salespeople see only what is theirs. Simple on purpose.'))
 story.append(step(8, 'Close (1 min)', 'Go back to the admin tab, Sidebar → Leads, filter by a source. Then stop sharing.',

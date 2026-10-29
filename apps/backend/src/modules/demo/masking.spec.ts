@@ -166,6 +166,13 @@ describe('DemoMasker — text scrubbing', () => {
     expect(p2).not.toBe('+923001234567');
   });
 
+  it('replaces the real office landmarks', () => {
+    const out = m.scrubText('Office 201, Haly Tower, DHA Phase 2 Lahore; also Hailey Tower; Islamabad: 3029B World Trade Centre, Giga Mall')!;
+    expect(out).not.toMatch(/Haly|Hailey|Giga|World Trade|3029/);
+    expect(out).toMatch(/Crescent Plaza/);
+    expect(out).toMatch(/Horizon Business Centre/);
+  });
+
   it('never lets the tenant name survive in any form', () => {
     const out = m.scrubText('See www.tashfeenimmigrationsolutions.com or TashfeenImmigration, @tashfeen_official, Tashfeen Barristers & Solicitors')!;
     expect(out.toLowerCase()).not.toContain('tashfeen');

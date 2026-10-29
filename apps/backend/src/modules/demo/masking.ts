@@ -103,6 +103,17 @@ const PHONE_RE = /(?:\+|00)?\d(?:[\s\-.()]?\d){9,14}/g;
 // Pakistani CNIC: 5-7-1.
 const CNIC_RE = /\b\d{5}-\d{7}-\d\b/g;
 const WAMID_RE = /wamid\.[A-Za-z0-9+/=_-]+/g;
+/**
+ * Office landmarks that identify the real tenant even without its name
+ * (spelling variants included). Replaced with the demo offices used by the
+ * AI orchestrator in DEMO_MODE.
+ */
+const OFFICE_TOKENS: Array<[RegExp, string]> = [
+  [/\bha(?:i|y)?l(?:e|a)?y\s+tower\b/gi, 'Crescent Plaza'],
+  [/\bgiga\s+mall\b/gi, 'Horizon Business Centre'],
+  [/\bworld\s+trade\s+cent(?:er|re)\b/gi, 'Horizon Business Centre'],
+  [/\b3029\s*-?\s*B\b/g, 'Suite 4'],
+];
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -436,9 +447,11 @@ export class DemoMasker {
     // www.tashfeenimmigrationsolutions.com, glued words, handles): nothing
     // containing a brand stem may survive.
     for (const stem of this.brandStems) {
-      s = s.replace(new RegExp(`[\w.-]*${escapeRe(stem)}[\w-]*(?:\.[a-z]{2,})+`, 'gi'), this.cfg.emailDomain);
+      s = s.replace(new RegExp(`[\\w.-]*${escapeRe(stem)}[\\w-]*(?:\\.[a-z]{2,})+`, 'gi'), this.cfg.emailDomain);
       s = s.replace(new RegExp(escapeRe(stem), 'gi'), (m) => matchCase(m, this.brandWord));
     }
+    // Real office landmarks the tenant's staff and bot quote in chats.
+    for (const [re, to] of OFFICE_TOKENS) s = s.replace(re, to);
     s = s.replace(CNIC_RE, (m) => this.cnic(m) ?? m);
     s = s.replace(PHONE_RE, (m) => {
       const masked = this.phone(m);

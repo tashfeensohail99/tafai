@@ -7,7 +7,7 @@
  * Rows that belong to the live lane (a real prospect's own messages) are
  * skipped on purpose: those are not production data.
  */
-import type { Pool } from 'pg';
+import type { Pool, QueryResultRow } from 'pg';
 import { FIRST_NAMES_F, FIRST_NAMES_M, LAST_NAMES } from './masking.names';
 
 export interface LeakFinding {
@@ -230,7 +230,7 @@ export class DemoLeakChecker {
       if (typeof v === 'string' && v.trim().length >= 6) ids.add(v.trim().toUpperCase().replace(/[\s-]/g, ''));
     };
 
-    const q = async <T>(sql: string): Promise<T[]> => (await this.source.query<T>(sql)).rows;
+    const q = async <T extends QueryResultRow>(sql: string): Promise<T[]> => (await this.source.query<T>(sql)).rows;
 
     for (const r of await q<{ firstName: string; lastName: string; email: string | null; phone: string; alternatePhone: string | null }>(
       'SELECT "firstName","lastName",email,phone,"alternatePhone" FROM crm.leads',

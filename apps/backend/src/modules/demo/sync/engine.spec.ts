@@ -103,7 +103,8 @@ beforeAll(async () => {
     VALUES
       ('lead-1', 'TIS-2026-00001', 'Muhammad Ali', 'Qadri', 'ali.qadri@gmail.com', '+923001234567', '03007654321', 'Ali Qadri wants Canada PR, call 0300-1234567, email ali.qadri@gmail.com', 'tok-1', '1234567890123456', now() - interval '1 day'),
       ('lead-gone', 'TIS-2026-00002', 'Gone', 'Person', NULL, '+923331112233', NULL, NULL, NULL, NULL, now() - interval '1 day'),
-      ('lead-live', 'TIS-2026-00003', 'Live', 'Prospect', NULL, '+447700900123', NULL, NULL, NULL, NULL, now() - interval '1 day');
+      ('lead-live', 'TIS-2026-00003', 'Live', 'Prospect', NULL, '+447700900123', NULL, NULL, NULL, NULL, now() - interval '1 day'),
+      ('e349cd6b-153d-465e-ac78-09457552333a', 'TIS-2026-00004', 'Uuid', 'Digits', NULL, '+923215550001', NULL, 'ref 1234567890123 kept?', NULL, NULL, now() - interval '1 day');
     INSERT INTO crm.clients (id, "referenceCode", "firstName", "lastName", email, phone, gender, "dateOfBirth", cnic, "passportNumber", address, "sourceLeadId")
     VALUES ('client-1', 'TIS-2026-00001', 'Muhammad Ali', 'Qadri', 'ali.qadri@gmail.com', '+923001234567', 'MALE', '1990-06-15', '35202-7654321-9', 'CD7654321', 'House 5, Street 9, DHA Phase 5, Lahore', 'lead-1');
     INSERT INTO whatsapp.channels (id, label, "wabaId", "phoneNumberId", "displayNumber", "accessTokenEnc", "webhookVerifyToken")
@@ -237,7 +238,10 @@ describe('DemoSyncEngine (integration)', () => {
     const res2 = await engine.run({ ...opts, full: true, tables: TABLES });
     expect(res2.ok).toBe(true);
     const ids = (await dst.query(`SELECT id FROM crm.leads ORDER BY id`)).rows.map((r) => r.id);
-    expect(ids).toEqual(['lead-1', 'lead-live', 'lead-prospect']);
+    // A UUID with a 10+ digit run must survive untouched (ids are never scrubbed).
+    expect(ids).toEqual(['e349cd6b-153d-465e-ac78-09457552333a', 'lead-1', 'lead-live', 'lead-prospect']);
+    const uuidLead = (await dst.query(`SELECT notes FROM crm.leads WHERE id = 'e349cd6b-153d-465e-ac78-09457552333a'`)).rows[0];
+    expect(uuidLead.notes).not.toContain('1234567890123'); // but digit runs in prose are still masked
     expect((await dst.query(`SELECT count(*)::int AS n FROM whatsapp.threads WHERE id = 'th-live'`)).rows[0].n).toBe(1);
     expect((await dst.query(`SELECT count(*)::int AS n FROM whatsapp.messages WHERE id = 'm-live'`)).rows[0].n).toBe(1);
     expect((await dst.query(`SELECT count(*)::int AS n FROM whatsapp.channels WHERE id = 'ch-live'`)).rows[0].n).toBe(1);

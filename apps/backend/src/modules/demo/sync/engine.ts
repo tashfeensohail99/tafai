@@ -52,6 +52,7 @@ export interface TableMeta {
 }
 
 const SYNC_SCHEMA = 'demo_sync';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class DemoSyncEngine {
   constructor(
@@ -67,6 +68,8 @@ export class DemoSyncEngine {
     const log = opts.log ?? (() => undefined);
     const startedAt = new Date();
     await this.ensureStateTable();
+    const addedEnums = await this.syncEnumValues();
+    if (addedEnums.length) log(`enum values added on target: ${addedEnums.join(', ')}`);
     const people = await loadPeopleDirectory(this.source, this.masker);
     log(`directory: ${people.leads.size} leads, ${people.clients.size} clients, ${people.users.size} users`);
 
@@ -105,7 +108,7 @@ export class DemoSyncEngine {
       if (!(col.name in row)) continue;
       const value = row[col.name];
       const r = rule.columns[col.name];
-      out[col.name] = r ? this.applyRule(r, value, row, ctx, col) : this.applyDefault(value, ctx, col);
+      out[col.name] = r ? this.applyRule(r, value, row, ctx, col) : this.applyDefault(value, ctx, col, meta);
     }
     return out;
   }
@@ -133,6 +136,31 @@ export class DemoSyncEngine {
          summary jsonb NOT NULL
        )`,
     );
+  }
+
+  /**
+   * Production has enum values that were added by hand and never made it into
+   * a migration (e.g. ClientStatus UNDER_PROCESSING). Copying such a row would
+   * fail, so before every run add any source enum value missing on the target
+   * (ALTER TYPE … ADD VALUE is additive and cannot run inside a transaction).
+   */
+  async syncEnumValues(): Promise<string[]> {
+    const sql = `SELECT n.nspname AS schema, t.typname AS type, e.enumlabel AS label, e.enumsortorder AS ord
+                   FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid JOIN pg_namespace n ON n.oid = t.typnamespace
+                  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  ORDER BY 1, 2, 4`;
+    type EnumRow = { schema: string; type: string; label: string; ord: number };
+    const [src, dst] = await Promise.all([this.source.query<EnumRow>(sql), this.target.query<EnumRow>(sql)]);
+    const have = new Set(dst.rows.map((r) => `${r.schema}.${r.type}:${r.label}`));
+    const targetTypes = new Set(dst.rows.map((r) => `${r.schema}.${r.type}`));
+    const added: string[] = [];
+    for (const r of src.rows) {
+      const type = `${r.schema}.${r.type}`;
+      if (!targetTypes.has(type) || have.has(`${type}:${r.label}`)) continue;
+      await this.target.query(`ALTER TYPE ${q(r.schema)}.${q(r.type)} ADD VALUE IF NOT EXISTS ${lit(r.label)}`);
+      added.push(`${type}:${r.label}`);
+    }
+    return added;
   }
 
   async tableMeta(pool: Pool, fq: string): Promise<TableMeta | null> {
@@ -442,13 +470,18 @@ export class DemoSyncEngine {
   }
 
   /** Columns without an explicit rule: scrub anything text-like, copy the rest. */
-  private applyDefault(value: unknown, ctx: RowContext, col: ColumnMeta): unknown {
+  private applyDefault(value: unknown, ctx: RowContext, col: ColumnMeta, meta?: TableMeta): unknown {
     if (value == null) return value;
+    // Identifiers are never scrubbed: primary keys, "<x>Id" foreign keys and
+    // anything shaped like a UUID. (A UUID can contain a 10+ digit run that
+    // the phone pattern would otherwise rewrite, silently breaking the key.)
+    if (meta?.pk.includes(col.name) || col.name === 'id' || /Id$/.test(col.name)) return value;
     if (col.udt === 'json' || col.udt === 'jsonb') return ctx.masker.scrubJson(value, { names: ctx.names });
     if (col.udt === 'text' || col.udt === 'varchar' || col.udt === 'bpchar') {
+      const s = String(value);
+      if (UUID_RE.test(s)) return s;
       // Enum-like / identifier strings (no spaces, no @, short) are left alone;
       // anything that looks like prose or contains a digit run gets scrubbed.
-      const s = String(value);
       if (/^[A-Za-z0-9_:.\-/]{0,64}$/.test(s) && !/\d{10,}/.test(s)) return s;
       return ctx.masker.scrubText(s, { names: ctx.names });
     }
@@ -465,6 +498,9 @@ export class DemoSyncEngine {
   }
 }
 
+function lit(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
 function q(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
 }

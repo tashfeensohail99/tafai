@@ -73,8 +73,14 @@ export class AppSettingsController {
    * so the admin never sees a misleading default when the read actually failed.
    */
   private async readManifest(): Promise<Record<string, unknown> | null> {
-    if (!(await this.storage.exists(APP_INFO_KEY))) return null;
-    const { bytes } = await this.storage.download(APP_INFO_KEY);
-    return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
+    try {
+      if (!(await this.storage.exists(APP_INFO_KEY))) return null;
+      const { bytes } = await this.storage.download(APP_INFO_KEY);
+      return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
+    } catch {
+      // No object storage configured (e.g. the sales demo) or an unreachable
+      // bucket: behave as "no build published" instead of a 500.
+      return null;
+    }
   }
 }

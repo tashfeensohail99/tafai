@@ -111,7 +111,15 @@ Services: `Postgres` (pgvector enabled), `Redis`, `backend` (root
 `Dockerfile`, port 3001, runs `prisma migrate deploy` on boot), `frontend`
 (`apps/frontend/Dockerfile`, port 3000). Custom domains
 `demo-api.summitautomates.com` → backend, `demo.summitautomates.com` → frontend
-(CNAMEs on Hostinger). The `*.up.railway.app` domains keep working as a fallback.
+(CNAMEs on Hostinger). The `*.up.railway.app` domains keep working as a fallback:
+frontend `https://frontend-production-488d.up.railway.app`, backend
+`https://backend-production-c877.up.railway.app`.
+
+Note: Railway kept both custom domains in "validating ownership" for hours after
+the CNAMEs propagated, so the frontend is currently built with
+`NEXT_PUBLIC_API_URL=https://backend-production-c877.up.railway.app` (prospects never
+see the API hostname). Once the certificate for `demo-api.summitautomates.com` is
+issued, switch that variable back and redeploy the frontend.
 
 Deploy from the feature branch with the CLI (the services are not connected
 to GitHub; connect them in the Railway dashboard if you prefer auto-deploys):

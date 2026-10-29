@@ -1533,6 +1533,59 @@ model SocialEngagement {
   @@schema("core")
 }
 
+// =============================================================================
+// NEW-POST → STAFF ENGAGEMENT ALERT
+// When a new company post goes live on FB/IG, notify staff to go like & comment
+// (which drives the engagement the verification engine above then confirms).
+// See docs/social-post-alerts.md.
+// =============================================================================
+
+/// Singleton config row for the new-post alert. Admin-editable.
+model SocialAlertConfig {
+  id             String   @id @default(uuid())
+  /// Master on/off. OFF by default — nothing is sent until an admin enables it.
+  enabled        Boolean  @default(false)
+  /// Set when toggled on; only posts published AFTER this fire alerts (so
+  /// enabling never back-blasts the whole recent feed).
+  enabledAt      DateTime?
+  /// Department NAMES to alert. Empty = every active department.
+  departments    String[] @default([])
+  /// Platforms to watch. Empty = both.
+  platforms      SocialPlatform[] @default([])
+  /// Delivery channels: any of EMAIL, BELL, BANNER. Empty = all.
+  channels       String[] @default([])
+  /// Optional quiet-hours window (Asia/Karachi, 0–23). Posts seen during the
+  /// window are deferred, not dropped — they alert once the window ends.
+  quietStartHour Int?
+  quietEndHour   Int?
+  updatedAt      DateTime @updatedAt
+
+  @@map("social_alert_config")
+  @@schema("core")
+}
+
+/// One row per post the poller has acted on — the dedupe ledger so each post
+/// alerts at most once. `alerted=false` rows are "seen but not alerted".
+model SocialPostAlert {
+  id             String         @id @default(uuid())
+  platform       SocialPlatform
+  externalId     String
+  permalink      String?
+  caption        String?
+  postedAt       DateTime?
+  alerted        Boolean        @default(false)
+  alertedAt      DateTime?
+  recipients     Int            @default(0)
+  /// Key of the SystemAlert banner row raised for this post (for expiry).
+  bannerAlertKey String?
+  createdAt      DateTime       @default(now())
+
+  @@unique([platform, externalId])
+  @@index([alerted, createdAt])
+  @@map("social_post_alerts")
+  @@schema("core")
+}
+
 model Partner {
   id             String        @id @default(uuid())
   organizationId String

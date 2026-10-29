@@ -22,6 +22,6 @@ import { PublicSocialHandlesController } from './public-social-handles.controlle
   imports: [StorageModule],
   providers: [MetaCredentialsService, SocialGraphService, SocialEngagementService, SocialSweepService],
   controllers: [SocialEngagementController, PublicSocialHandlesController],
-  exports: [SocialEngagementService],
+  exports: [SocialEngagementService, SocialGraphService],
 })
 export class SocialEngagementModule {}

@@ -12,6 +12,17 @@
  */
 import type { ColumnRule, PeopleDirectory, Row, TableRule } from './types';
 import { DemoMasker } from '../masking';
+import { DEMO_AGENT_EMPLOYEE_ID } from '../demo.constants';
+
+/**
+ * Give the demo agent a realistic queue: a deterministic ~10% of the leads that
+ * production assigned to someone are re-pointed at the demo agent (same leads
+ * every run, so the inbox is stable across syncs).
+ */
+const toDemoAgent: ColumnRule = {
+  kind: 'fn',
+  fn: (v, row, ctx) => (v == null ? null : ctx.masker.int('demo-agent', String(row.id), 10) === 0 ? DEMO_AGENT_EMPLOYEE_ID : v),
+};
 
 const keep: ColumnRule = { kind: 'keep' };
 const nul: ColumnRule = { kind: 'null' };
@@ -174,6 +185,8 @@ export const DEMO_SYNC_RULES: TableRule[] = [
       email,
       phone,
       alternatePhone: phone,
+      assignedEmployeeId: toDemoAgent,
+      preferredEmployeeId: toDemoAgent,
       notes: text,
       lostReason: text,
       blockedReason: text,

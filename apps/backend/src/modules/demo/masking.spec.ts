@@ -145,6 +145,17 @@ describe('DemoMasker — text scrubbing', () => {
     expect(out).toMatch(/wamid\.demo[0-9a-f]{24}/);
   });
 
+  it('replaces any real full name from the global index, even with no per-row alias', () => {
+    const index = new Map([
+      ['fazal khan', { firstName: 'Hamza', lastName: 'Baig' }],
+      ['muhammad ali qadri', { firstName: 'Usman', lastName: 'Raza' }],
+      ['ali qadri', { firstName: 'Usman', lastName: 'Raza' }],
+    ]);
+    const out = m.scrubText('New lead assigned: Fazal Khan (Canada PR). Also MUHAMMAD ALI QADRI replied; self employed.', { nameIndex: index })!;
+    expect(out).toBe('New lead assigned: Hamza Baig (Canada PR). Also USMAN RAZA replied; self employed.');
+    expect(m.scrubText('Fazalkhan is not a match, nor is Fazal Khanum', { nameIndex: index })).toBe('Fazalkhan is not a match, nor is Fazal Khanum');
+  });
+
   it('is idempotent for names, emails and brand (phones are a bijection, so only their digits move)', () => {
     const once = m.scrubText('Ali Qadri ali@x.com Tashfeen Immigration Solutions, Tashfeen', { names })!;
     const twice = m.scrubText(once, { names })!;

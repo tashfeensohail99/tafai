@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
-import type { DemoMasker, NameAlias } from '../masking';
+import type { DemoMasker, NameAlias, PersonName } from '../masking';
+import { personalNameKeys } from '../names-filter';
 import type { PeopleDirectory, PersonRef, StaffRef } from './types';
 
 /**
@@ -66,5 +67,20 @@ export async function loadPeopleDirectory(source: Pool, masker: DemoMasker): Pro
     if (fake && (real.firstName || real.lastName)) staffAliases.push({ real, fake });
   }
 
-  return { leads, clients, users, employeeUser, staffAliases };
+  // Global name index: every real lead/client/staff full name -> that person's
+  // fake name. Applied to ALL free text so a name survives nowhere, linked or not.
+  const nameIndex = new Map<string, PersonName>();
+  for (const p of [...leads.values(), ...clients.values()]) {
+    for (const key of personalNameKeys(p.real.firstName, p.real.lastName)) {
+      if (!nameIndex.has(key)) nameIndex.set(key, p.fake);
+    }
+  }
+  for (const u of users.values()) {
+    if (!u.fake) continue;
+    for (const key of personalNameKeys(u.real.firstName, u.real.lastName)) {
+      if (!nameIndex.has(key)) nameIndex.set(key, u.fake);
+    }
+  }
+
+  return { leads, clients, users, employeeUser, staffAliases, nameIndex };
 }

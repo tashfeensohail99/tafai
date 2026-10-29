@@ -22,7 +22,7 @@ const email: ColumnRule = { kind: 'email' };
 const media: ColumnRule = { kind: 'media' };
 const secret: ColumnRule = { kind: 'secret' };
 const fileName: ColumnRule = { kind: 'fileName' };
-const adReferral: ColumnRule = { kind: 'fn', fn: (v, _r, ctx) => (v == null ? null : ctx.masker.scrubAdReferral(v, { names: ctx.names })) };
+const adReferral: ColumnRule = { kind: 'fn', fn: (v, _r, ctx) => (v == null ? null : ctx.masker.scrubAdReferral(v, { names: ctx.names, nameIndex: ctx.nameIndex })) };
 
 /**
  * A valid bcrypt hash (cost 12) of a 32-byte random string that was thrown
@@ -149,7 +149,7 @@ export const DEMO_SYNC_RULES: TableRule[] = [
       pageId: keep,
     },
   },
-  { table: 'whatsapp.templates', mode: 'full', columns: { components: json, name: keep, rejectedReason: text } },
+  { table: 'whatsapp.templates', mode: 'full', skipNameIndex: true, columns: { components: json, name: keep, rejectedReason: text } },
   {
     table: 'whatsapp.campaigns',
     mode: 'full',
@@ -292,18 +292,41 @@ export const DEMO_SYNC_RULES: TableRule[] = [
   {
     table: 'ai.knowledge',
     mode: 'full',
+    skipNameIndex: true,
     columns: { queryEn: text, queryUr: text, answerEn: text, answerUr: text, sourceFile: keep, embedding: keep },
   },
-  { table: 'ai.brochures', mode: 'full', columns: { s3Key: media, displayTitle: text } },
+  { table: 'ai.brochures', mode: 'full', skipNameIndex: true, columns: { s3Key: media, displayTitle: text } },
   { table: 'ai.runs', mode: 'incremental', watermarkColumn: 'createdAt', prune: false, columns: { error: text, skipReason: keep, model: keep, mode: keep } },
 
   // ── activity / notifications ───────────────────────────────────────────
-  { table: 'core.notifications', mode: 'incremental', watermarkColumn: 'createdAt', prune: false, columns: { title: text, body: text, link: keep, type: keep } },
+  {
+    table: 'core.notifications',
+    mode: 'incremental',
+    watermarkColumn: 'createdAt',
+    prune: false,
+    // No lead column: resolve the person from the uuid inside the link path
+    // (/sales/leads/<id>, /admin/clients/<id> ...) so their name is aliased.
+    person: (row, people) => {
+      const ids = String(row.link ?? '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+      for (const id of ids) {
+        const p = people.leads.get(id) ?? people.clients.get(id);
+        if (p) return p;
+      }
+      return null;
+    },
+    columns: { title: text, body: text, link: keep, type: keep },
+  },
   {
     table: 'crm.activity_timeline',
     mode: 'incremental',
     watermarkColumn: 'createdAt',
     prune: false,
+    person: (row, people) => {
+      const leadId = row.leadId as string | null;
+      const clientId = row.clientId as string | null;
+      const entityId = String(row.entityId ?? '');
+      return (leadId && people.leads.get(leadId)) || (clientId && people.clients.get(clientId)) || people.leads.get(entityId) || people.clients.get(entityId) || null;
+    },
     columns: { description: text, metadata: json, entityType: keep, entityId: keep },
   },
 
@@ -352,7 +375,7 @@ export const DEMO_SYNC_RULES: TableRule[] = [
       agentExtension: keep,
     },
   },
-  { table: 'crm.quick_replies', mode: 'full', columns: { title: text, body: text } },
+  { table: 'crm.quick_replies', mode: 'full', skipNameIndex: true, columns: { title: text, body: text } },
 
   // ── finance (dashboards) ───────────────────────────────────────────────
   { table: 'finance.document_sequences', mode: 'full', columns: {} },

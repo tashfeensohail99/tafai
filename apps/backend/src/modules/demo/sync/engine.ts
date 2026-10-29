@@ -397,7 +397,7 @@ export class DemoSyncEngine {
     const names: NameAlias[] = [...people.staffAliases];
     if (person && (person.real.firstName || person.real.lastName)) names.push({ real: person.real, fake: person.fake });
     if (rule.extraNames) names.push(...rule.extraNames(row, people));
-    return { masker: this.masker, people, table: rule.table, person, staff, names };
+    return { masker: this.masker, people, table: rule.table, person, staff, names, nameIndex: rule.skipNameIndex ? undefined : people.nameIndex };
   }
 
   /** Default person resolution: leadId → clientId → (row is a lead/client itself). */
@@ -458,11 +458,11 @@ export class DemoSyncEngine {
       case 'fileName':
         return m.fileName(str);
       case 'text':
-        return m.scrubText(str, { names: ctx.names });
+        return m.scrubText(str, { names: ctx.names, nameIndex: ctx.nameIndex });
       case 'json':
-        return value == null ? null : m.scrubJson(value, { names: ctx.names });
+        return value == null ? null : m.scrubJson(value, { names: ctx.names, nameIndex: ctx.nameIndex });
       case 'messagePayload':
-        return value == null ? null : m.scrubMessagePayload(value, { names: ctx.names, fakeProfileName: ctx.person?.fake.firstName });
+        return value == null ? null : m.scrubMessagePayload(value, { names: ctx.names, nameIndex: ctx.nameIndex, fakeProfileName: ctx.person?.fake.firstName });
       case 'fn':
         return rule.fn(value, row, ctx);
     }
@@ -475,17 +475,17 @@ export class DemoSyncEngine {
     // anything shaped like a UUID. (A UUID can contain a 10+ digit run that
     // the phone pattern would otherwise rewrite, silently breaking the key.)
     if (meta?.pk.includes(col.name) || col.name === 'id' || /Id$/.test(col.name)) return value;
-    if (col.udt === 'json' || col.udt === 'jsonb') return ctx.masker.scrubJson(value, { names: ctx.names });
+    if (col.udt === 'json' || col.udt === 'jsonb') return ctx.masker.scrubJson(value, { names: ctx.names, nameIndex: ctx.nameIndex });
     if (col.udt === 'text' || col.udt === 'varchar' || col.udt === 'bpchar') {
       const s = String(value);
       if (UUID_RE.test(s)) return s;
       // Enum-like / identifier strings (no spaces, no @, short) are left alone;
       // anything that looks like prose or contains a digit run gets scrubbed.
       if (/^[A-Za-z0-9_:.\-/]{0,64}$/.test(s) && !/\d{10,}/.test(s)) return s;
-      return ctx.masker.scrubText(s, { names: ctx.names });
+      return ctx.masker.scrubText(s, { names: ctx.names, nameIndex: ctx.nameIndex });
     }
     if (col.udt === '_text' && Array.isArray(value)) {
-      return value.map((v) => (typeof v === 'string' ? ctx.masker.scrubText(v, { names: ctx.names }) : v));
+      return value.map((v) => (typeof v === 'string' ? ctx.masker.scrubText(v, { names: ctx.names, nameIndex: ctx.nameIndex }) : v));
     }
     return value;
   }

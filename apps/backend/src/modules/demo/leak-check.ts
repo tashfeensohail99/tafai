@@ -9,6 +9,7 @@
  */
 import type { Pool, QueryResultRow } from 'pg';
 import { FIRST_NAMES_F, FIRST_NAMES_M, LAST_NAMES } from './masking.names';
+import { normName, personalNameKeys } from './names-filter';
 
 export interface LeakFinding {
   table: string;
@@ -47,6 +48,8 @@ export interface LeakCheckOptions {
 
 const DEFAULT_SCHEMAS = ['core', 'crm', 'whatsapp', 'ai', 'processing', 'finance', 'legal', 'audit', 'public'];
 const SKIP_TABLES = new Set(['public._prisma_migrations', 'core.demo_access_links', 'core.demo_access_link_uses']);
+/** Company content, never about one person: phones/emails/ids are still checked, names are not. */
+const NO_NAME_CHECK_TABLES = new Set(['ai.knowledge', 'ai.brochures', 'whatsapp.templates', 'crm.quick_replies', 'processing.processing_email_templates', 'finance.agreement_templates', 'processing.document_requirement_templates']);
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const DIGIT_RUN_RE = /\+?\d(?:[\s\-.()]?\d){8,14}/g;
@@ -74,39 +77,6 @@ function phoneVariants(raw: string): string[] {
 function maskSample(s: string): string {
   if (s.length <= 6) return '***';
   return `${s.slice(0, 3)}…${s.slice(-2)}`;
-}
-
-/**
- * Tokens that are never a personal name. Production lead rows contain junk
- * like firstName="Visit" lastName="Visa" or "Can"/"I", and a bigram matcher fed
- * with those would flag ordinary prose. A real name needs two alphabetic
- * tokens of 3+ letters, neither in this list.
- */
-const NAME_STOPWORDS = new Set((
-  'the and for you your yours can could would should will with this that these those what when where which who whom why how ' +
-  'are was were been being have has had does did doing not but yet nor also any all some more most many much such very just ' +
-  'from into onto over under about after before again against between through during without within because until while ' +
-  'here there then than too only own same other another each every both few new old good bad best better first last next ' +
-  'one two three four five six seven eight nine ten hello dear sir madam mister miss mrs thanks thank please okay yes ' +
-  'visa visit visitor visiting immigration immigrant migrate migration canada canadian australia australian america american ' +
-  'usa uk united kingdom states europe germany italy portugal malta poland romania turkey dubai uae qatar saudi oman kuwait ' +
-  'bahrain pakistan pakistani lahore karachi islamabad rawalpindi faisalabad multan peshawar sialkot gujranwala quetta ' +
-  'study student students work worker permit permits job jobs family spouse wife husband child children parent parents ' +
-  'business investor investment skilled express entry pnp lmia ielts pte toefl bank statement statements passport cnic ' +
-  'consultation consult appointment office call calls phone number email whatsapp message fee fees price cost pay payment ' +
-  'process processing case file documents document apply application applied applicant form forms eligibility eligible ' +
-  'test tests testing demo sample law firm lawyer legal company group solutions services service consultant consultants ' +
-  'free info information details detail interested interest want need help support time today tomorrow week month year ' +
-  'morning evening night day days send sent get got give take make made like know need wants needs ask asked tell told ' +
-  'unknown none null test1 test2 customer client lead contact user admin agent'
-).split(/\s+/).filter(Boolean));
-
-function isNameToken(t: string): boolean {
-  return t.length >= 3 && /^[a-z؀-ۿ]+$/.test(t) && !NAME_STOPWORDS.has(t);
-}
-
-function normName(s: string): string {
-  return s.toLowerCase().replace(/[^a-z؀-ۿ\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export class DemoLeakChecker {
@@ -174,7 +144,7 @@ export class DemoLeakChecker {
               const text = typeof v === 'string' ? v : JSON.stringify(v);
               if (!text) continue;
               scannedValues++;
-              const hits = this.scanText(text, real);
+              const hits = this.scanText(text, real, !NO_NAME_CHECK_TABLES.has(fq));
               for (const h of hits) {
                 totalHits++;
                 if (findings.length < maxFindings) {
@@ -240,25 +210,21 @@ export class DemoLeakChecker {
       if (x.includes('@') && !allowEmails.has(x)) emails.add(x);
     };
     const addName = (first: unknown, last: unknown) => {
-      const f = normName(String(first ?? ''));
-      const l = normName(String(last ?? ''));
-      if (!f || !l || f.length + l.length < 6) return;
-      const full = `${f} ${l}`;
-      if (allowNames.has(full)) return;
-      const parts = f.split(' ');
-      const lastFirst = parts[parts.length - 1];
-      if (!parts.every(isNameToken) || !isNameToken(l)) {
-        ambiguous++;
+      const keys = personalNameKeys(String(first ?? ''), String(last ?? ''));
+      if (!keys.length) {
+        if (first && last) ambiguous++;
         return;
       }
+      if (allowNames.has(keys[0])) return;
+      const parts = keys[0].split(' ');
+      const l = parts[parts.length - 1];
       // A name made purely of pool tokens can be regenerated by the masker for
-      // someone else → not a reliable detector. Count it, skip it.
-      if (poolFirst.has(lastFirst) && poolLast.has(l) && parts.every((p) => poolFirst.has(p))) {
+      // someone else -> not a reliable detector. Count it, skip it.
+      if (poolLast.has(l) && parts.slice(0, -1).every((p) => poolFirst.has(p))) {
         ambiguous++;
         return;
       }
-      names.add(full);
-      if (parts.length > 1) names.add(`${lastFirst} ${l}`);
+      for (const k of keys) names.add(k);
     };
     const addId = (v: unknown) => {
       if (typeof v === 'string' && v.trim().length >= 6) ids.add(v.trim().toUpperCase().replace(/[\s-]/g, ''));
@@ -333,7 +299,7 @@ export class DemoLeakChecker {
 
   // ── matching ──
 
-  scanText(text: string, real: { phones: Set<string>; emails: Set<string>; names: Set<string>; ids: Set<string> }): Array<{ kind: LeakFinding['kind']; match: string }> {
+  scanText(text: string, real: { phones: Set<string>; emails: Set<string>; names: Set<string>; ids: Set<string> }, checkNames = true): Array<{ kind: LeakFinding['kind']; match: string }> {
     const hits: Array<{ kind: LeakFinding['kind']; match: string }> = [];
     for (const m of text.match(EMAIL_RE) ?? []) {
       if (real.emails.has(m.toLowerCase())) hits.push({ kind: 'email', match: m });
@@ -345,7 +311,7 @@ export class DemoLeakChecker {
     for (const m of text.match(CNIC_RE) ?? []) {
       if (real.ids.has(m.replace(/-/g, ''))) hits.push({ kind: 'national-id', match: m });
     }
-    if (real.names.size) {
+    if (checkNames && real.names.size) {
       const words = normName(text).split(' ').filter(Boolean);
       for (let i = 0; i + 1 < words.length; i++) {
         const bigram = `${words[i]} ${words[i + 1]}`;

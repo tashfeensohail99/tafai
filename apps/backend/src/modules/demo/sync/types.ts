@@ -15,7 +15,8 @@ export interface PeopleDirectory {
   employeeUser: Map<string, string>;
   /** Every staff alias, applied to all free text. */
   staffAliases: NameAlias[];
-  /** Organisation name tokens (real org name) treated as brand tokens. */
+  /** Every real person's normalised full name -> fake name (see names-filter). */
+  nameIndex: Map<string, PersonName>;
 }
 
 export interface PersonRef {
@@ -46,6 +47,8 @@ export interface RowContext {
   staff?: StaffRef | null;
   /** Name aliases to scrub out of this row's free text. */
   names: NameAlias[];
+  /** Global real-name index (omitted for company-content tables). */
+  nameIndex?: Map<string, PersonName>;
 }
 
 export type ColumnRule =
@@ -103,6 +106,12 @@ export interface TableRule {
    * and $2 = text[] of protected user ids.
    */
   pruneExcludeSql?: string;
+  /**
+   * Company content (knowledge base, templates, quick replies) is never about
+   * one person; skip the global name index there so junk lead names that
+   * happen to be ordinary words cannot rewrite it.
+   */
+  skipNameIndex?: boolean;
   /** Rows per upsert statement. */
   batchSize?: number;
   /** Rows per source fetch. */

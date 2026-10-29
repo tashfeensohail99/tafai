@@ -85,6 +85,12 @@ export interface NameAlias {
 export interface ScrubContext {
   /** Lead / client / staff names known to appear in this text. */
   names?: NameAlias[];
+  /**
+   * Global index of EVERY real person's normalised full name -> fake name,
+   * applied after the per-row aliases. Catches names in text that has no
+   * link to the person (notifications, timeline, AI runs, free notes).
+   */
+  nameIndex?: Map<string, PersonName>;
 }
 
 // ───────────────────────────── primitives ────────────────────────────────────
@@ -419,6 +425,7 @@ export class DemoMasker {
     if (ctx?.names?.length) s = this.replaceNames(s, ctx.names, 'full');
     if (this.brandRe) s = s.replace(this.brandRe, (m) => (m.length <= 9 && this.cfg.brandShort ? this.cfg.brandShort : this.cfg.brandName));
     if (ctx?.names?.length) s = this.replaceNames(s, ctx.names, 'tokens');
+    if (ctx?.nameIndex?.size) s = this.replaceIndexedNames(s, ctx.nameIndex);
     s = s.replace(CNIC_RE, (m) => this.cnic(m) ?? m);
     s = s.replace(PHONE_RE, (m) => {
       const masked = this.phone(m);
@@ -459,6 +466,48 @@ export class DemoMasker {
       s = s.replace(re, (m) => matchCase(m, fake));
     }
     return s;
+  }
+
+  /**
+   * Replace every 2- or 3-word span whose normalised form is a known real
+   * person's full name. O(len): tokens are scanned once, longest match first.
+   */
+  private replaceIndexedNames(s: string, index: Map<string, PersonName>): string {
+    const tokens: Array<{ start: number; end: number; norm: string }> = [];
+    const re = /[A-Za-z\u0600-\u06FF]+/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) tokens.push({ start: m.index, end: m.index + m[0].length, norm: m[0].toLowerCase() });
+    if (tokens.length < 2) return s;
+    const edits: Array<{ start: number; end: number; text: string }> = [];
+    let i = 0;
+    while (i + 1 < tokens.length) {
+      let hit: PersonName | undefined;
+      let span = 0;
+      if (i + 2 < tokens.length) {
+        hit = index.get(`${tokens[i].norm} ${tokens[i + 1].norm} ${tokens[i + 2].norm}`);
+        if (hit) span = 3;
+      }
+      if (!hit) {
+        hit = index.get(`${tokens[i].norm} ${tokens[i + 1].norm}`);
+        if (hit) span = 2;
+      }
+      if (hit) {
+        const start = tokens[i].start;
+        const end = tokens[i + span - 1].end;
+        edits.push({ start, end, text: matchCase(s.slice(start, end), `${hit.firstName} ${hit.lastName}`) });
+        i += span;
+      } else {
+        i += 1;
+      }
+    }
+    if (!edits.length) return s;
+    let out = '';
+    let pos = 0;
+    for (const e of edits) {
+      out += s.slice(pos, e.start) + e.text;
+      pos = e.end;
+    }
+    return out + s.slice(pos);
   }
 
   /** Deep-scrub every string inside a JSON value. Keys are preserved. */

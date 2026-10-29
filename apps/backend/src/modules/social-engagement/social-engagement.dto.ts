@@ -1,5 +1,12 @@
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { SocialEngagementStatus, SocialPlatform } from '@prisma/client';
+
+/** Step 1 of the shared public form: identify the employee by work email. */
+export class LookupByEmailDto {
+  @IsEmail()
+  @MaxLength(200)
+  email!: string;
+}
 
 export class UpdateHandleDto {
   // `null`/'' clears the field; a value is normalised server-side.
@@ -37,6 +44,11 @@ export class UpdateHandleDto {
 /** Fields posted by the public self-submit form. Accepts a handle OR a URL;
  *  normalised + validated per platform server-side. Instagram is required. */
 export class PublicIntakeDto {
+  // Work email identifies the employee (the shared link carries no token).
+  @IsEmail()
+  @MaxLength(200)
+  email!: string;
+
   @IsString()
   @MaxLength(300)
   instagram!: string;

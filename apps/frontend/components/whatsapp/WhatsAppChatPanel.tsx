@@ -3096,10 +3096,11 @@ function AdReferralBanner({
   at: string | null;
   onOpenImage?: (url: string) => void;
 }) {
-  const thumb =
+  const thumb = httpUrlOrUndefined(
     referral.thumbnail_url ||
-    referral.image_url ||
-    (referral.media_type === 'video' ? referral.video_url : undefined);
+      referral.image_url ||
+      (referral.media_type === 'video' ? referral.video_url : undefined),
+  );
   const headline = referral.headline?.trim() || 'WhatsApp ad';
   const subtitle = referral.body?.trim() || referral.source_type || 'Click-to-WhatsApp ad';
   const when = at ? new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
@@ -3247,10 +3248,11 @@ function InlineAdReferralCard({
   referral: AdReferral;
   isOut: boolean;
 }) {
-  const thumb =
+  const thumb = httpUrlOrUndefined(
     referral.thumbnail_url ||
-    referral.image_url ||
-    (referral.media_type === 'video' ? referral.video_url : undefined);
+      referral.image_url ||
+      (referral.media_type === 'video' ? referral.video_url : undefined),
+  );
   const headline = referral.headline?.trim() || 'WhatsApp ad';
   const mediaLabel = referral.media_type === 'video' ? 'Video ad' : referral.media_type === 'image' ? 'Image ad' : 'Ad';
   return (
@@ -4005,6 +4007,11 @@ function DemoMediaPlaceholder({
       </div>
     </div>
   );
+}
+
+/** Only real web URLs may become an <img src>; demo placeholders and Meta ids must not. */
+function httpUrlOrUndefined(u: string | null | undefined): string | undefined {
+  return u && /^https?:\/\//i.test(u) ? u : undefined;
 }
 
 function MediaBubbleContent({

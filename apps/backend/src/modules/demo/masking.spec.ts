@@ -166,6 +166,13 @@ describe('DemoMasker — text scrubbing', () => {
     expect(p2).not.toBe('+923001234567');
   });
 
+  it('never lets the tenant name survive in any form', () => {
+    const out = m.scrubText('See www.tashfeenimmigrationsolutions.com or TashfeenImmigration, @tashfeen_official, Tashfeen Barristers & Solicitors')!;
+    expect(out.toLowerCase()).not.toContain('tashfeen');
+    expect(out).toContain('summit-demo.example');
+    expect(out).toContain('Summit Immigration Barristers & Solicitors');
+  });
+
   it('does not touch reference codes, uuids, years or short numbers', () => {
     const s = 'Ref TIS-2026-00123, id 4b497ef0-32f8-4c1b-9a2e-123456789abc, year 2026, qty 12345, amount 250000';
     expect(m.scrubText(s)).toBe(s);
@@ -197,5 +204,10 @@ describe('DemoMasker — text scrubbing', () => {
     expect((out.document as Record<string, unknown>).filename).toMatch(/^document-[0-9a-f]{6}\.pdf$/);
     expect((out.location as Record<string, unknown>).latitude).toBeUndefined();
     expect(JSON.stringify(out)).not.toMatch(/1234567890123456|31\.5|74\.3/);
+    const ad = m.scrubAdReferral({ source_type: 'ad', headline: 'Study in Canada', ctwa_clid: 'abc123', image_url: 'https://cdn/x.jpg', thumbnail_url: 'https://cdn/t.jpg' }) as Record<string, unknown>;
+    expect(ad.headline).toBe('Study in Canada');
+    expect(ad.ctwa_clid).not.toBe('abc123');
+    expect(ad.image_url).toBeUndefined();
+    expect(ad.thumbnail_url).toBeUndefined();
   });
 });

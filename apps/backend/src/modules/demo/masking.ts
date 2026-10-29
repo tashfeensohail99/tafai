@@ -112,6 +112,10 @@ export class DemoMasker {
   readonly cfg: MaskingConfig;
   private readonly key: Buffer;
   private readonly brandRe: RegExp | null;
+  /** Lower-case stems of the real brand (e.g. "tashfeen") for the catch-all pass. */
+  private readonly brandStems: string[];
+  /** First word of the demo brand ("Summit"), used where only a word fits. */
+  private readonly brandWord: string;
 
   constructor(cfg: MaskingConfig) {
     if (!cfg.salt || cfg.salt.length < 16) {
@@ -120,6 +124,8 @@ export class DemoMasker {
     this.cfg = { ...DEFAULT_MASKING_CONFIG, ...cfg };
     this.key = createHmac('sha256', 'tafai-demo-mask').update(cfg.salt).digest();
     const tokens = [...(this.cfg.brandTokens ?? [])].sort((a, b) => b.length - a.length);
+    this.brandStems = [...new Set(tokens.map((t) => t.toLowerCase().split(/[^a-z0-9]+/)[0]).filter((t) => t.length >= 5))];
+    this.brandWord = (this.cfg.brandShort ?? this.cfg.brandName).split(' ')[0] || this.cfg.brandName;
     this.brandRe = tokens.length
       ? new RegExp(`(?<![A-Za-z0-9])(?:${tokens.map(escapeRe).join('|')})(?![A-Za-z0-9])`, 'gi')
       : null;
@@ -426,6 +432,13 @@ export class DemoMasker {
     if (this.brandRe) s = s.replace(this.brandRe, (m) => (m.length <= 9 && this.cfg.brandShort ? this.cfg.brandShort : this.cfg.brandName));
     if (ctx?.names?.length) s = this.replaceNames(s, ctx.names, 'tokens');
     if (ctx?.nameIndex?.size) s = this.replaceIndexedNames(s, ctx.nameIndex);
+    // Catch-all for the tenant name in any other form (domains such as
+    // www.tashfeenimmigrationsolutions.com, glued words, handles): nothing
+    // containing a brand stem may survive.
+    for (const stem of this.brandStems) {
+      s = s.replace(new RegExp(`[\w.-]*${escapeRe(stem)}[\w-]*(?:\.[a-z]{2,})+`, 'gi'), this.cfg.emailDomain);
+      s = s.replace(new RegExp(escapeRe(stem), 'gi'), (m) => matchCase(m, this.brandWord));
+    }
     s = s.replace(CNIC_RE, (m) => this.cnic(m) ?? m);
     s = s.replace(PHONE_RE, (m) => {
       const masked = this.phone(m);
@@ -572,7 +585,8 @@ export class DemoMasker {
       if (/^(ctwa_clid|source_id|ad_id|adset_id|campaign_id|form_id|leadgen_id)$/i.test(k)) {
         out[k] = `demo${this.hex(`adref:${k}`, String(raw), 16)}`;
       } else if (/url$/i.test(k) || /^(image|video|thumbnail)/i.test(k)) {
-        out[k] = DemoMasker.MEDIA_PLACEHOLDER;
+        // Drop media URLs entirely: a marker here would end up in an <img src>.
+        continue;
       } else {
         out[k] = this.scrubJson(raw, ctx);
       }

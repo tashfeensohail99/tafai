@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, SocialEngagementStatus, SocialPlatform } from '@prisma/client';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { SocialGraphService, type ResolvedPage } from './social-graph.service';
@@ -86,9 +85,6 @@ export class SocialEngagementService {
       instagramUrl: instagramUrl(e.instagramHandle),
       tiktokUrl: tiktokUrl(e.tiktokHandle),
       submittedAt: e.socialHandlesSubmittedAt,
-      // Per-employee signed link for the public self-submit form. The admin
-      // page builds `${origin}/onboarding/social-handles/${formToken}`.
-      formToken: this.tokenForEmployee(e.id),
     }));
   }
 
@@ -119,46 +115,19 @@ export class SocialEngagementService {
   }
 
   // ---------------------------------------------------------------------------
-  // Public self-submit intake (tokenized, no CRM login)
+  // Public self-submit intake — ONE shared link, no login. Employees identify
+  // themselves by their work email (the one in the system), which maps to their
+  // Employee record. No per-employee links, no roster exposed.
   // ---------------------------------------------------------------------------
 
-  private formSecret(): string {
-    // Dedicated secret if set, else derive from the always-present JWT secret
-    // so the link works without new config. Namespaced so it can't collide
-    // with a real auth token.
-    const base = process.env.SOCIAL_HANDLE_FORM_SECRET || process.env.JWT_SECRET || '';
-    return `social-handle-form:${base}`;
-  }
-
-  /** Stateless HMAC-signed token: base64url(employeeId).base64url(sig). */
-  tokenForEmployee(employeeId: string): string {
-    const payload = Buffer.from(employeeId, 'utf8').toString('base64url');
-    const sig = createHmac('sha256', this.formSecret()).update(payload).digest('base64url');
-    return `${payload}.${sig}`;
-  }
-
-  private verifyFormToken(token: string): string {
-    const [payload, sig] = (token ?? '').split('.');
-    if (!payload || !sig) throw new BadRequestException('This link is invalid or has expired.');
-    const expected = createHmac('sha256', this.formSecret()).update(payload).digest('base64url');
-    const a = Buffer.from(sig);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      throw new BadRequestException('This link is invalid or has expired.');
-    }
-    try {
-      return Buffer.from(payload, 'base64url').toString('utf8');
-    } catch {
-      throw new BadRequestException('This link is invalid or has expired.');
-    }
-  }
-
-  /** Prefill payload for the public form — name + any current handles. */
-  async getPublicIntake(token: string) {
-    const employeeId = this.verifyFormToken(token);
-    const e = await this.prisma.employee.findFirst({
-      where: { id: employeeId, deletedAt: null },
+  /** Find the employee behind a work email, or null. Email match is case-insensitive. */
+  private async findEmployeeByEmail(rawEmail: string) {
+    const email = (rawEmail ?? '').trim();
+    if (!email) return null;
+    return this.prisma.employee.findFirst({
+      where: { deletedAt: null, user: { email: { equals: email, mode: 'insensitive' } } },
       select: {
+        id: true,
         firstName: true,
         lastName: true,
         instagramHandle: true,
@@ -169,8 +138,16 @@ export class SocialEngagementService {
         socialHandlesSubmittedAt: true,
       },
     });
-    if (!e) throw new NotFoundException('This link is no longer valid.');
+  }
+
+  /** Step 1: confirm who the email belongs to + prefill any handles on file. */
+  async lookupByEmail(email: string) {
+    const e = await this.findEmployeeByEmail(email);
+    if (!e) {
+      return { found: false as const };
+    }
     return {
+      found: true as const,
       name: `${e.firstName} ${e.lastName}`.trim(),
       instagram: e.instagramHandle,
       facebookUrl: e.facebookProfileUrl,
@@ -181,14 +158,14 @@ export class SocialEngagementService {
     };
   }
 
-  /** Validate + normalize + upsert handles submitted via the public form. */
-  async submitPublicIntake(token: string, dto: PublicIntakeDto) {
-    const employeeId = this.verifyFormToken(token);
-    const exists = await this.prisma.employee.findFirst({
-      where: { id: employeeId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!exists) throw new NotFoundException('This link is no longer valid.');
+  /** Step 2: validate + normalize + upsert handles onto the matched employee. */
+  async submitByEmail(dto: PublicIntakeDto) {
+    const employee = await this.findEmployeeByEmail(dto.email);
+    if (!employee) {
+      throw new NotFoundException(
+        'We couldn’t find a team member with that work email. Please use your company email, or contact admin.',
+      );
+    }
 
     // Instagram is required (it's what the verification engine matches on).
     const ig = normalizeSocial('instagram', dto.instagram);
@@ -199,7 +176,7 @@ export class SocialEngagementService {
     const yt = normalizeSocial('youtube', dto.youtube);
 
     await this.prisma.employee.update({
-      where: { id: employeeId },
+      where: { id: employee.id },
       data: {
         instagramHandle: ig.handle ?? null,
         facebookProfileUrl: fb?.url ?? null,
@@ -211,6 +188,7 @@ export class SocialEngagementService {
     });
     return {
       ok: true,
+      name: `${employee.firstName} ${employee.lastName}`.trim(),
       normalized: {
         instagramUrl: ig.url,
         facebookUrl: fb?.url ?? null,

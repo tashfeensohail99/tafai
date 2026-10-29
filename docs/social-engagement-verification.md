@@ -112,17 +112,17 @@ Permissions synced by `scripts/sync-social-engagement-perms.ts` (additive, idemp
 The UI states plainly that **likes/reactions cannot be system-verified** and that
 **FB comments are text-verified, not author-proven**, so management reads the numbers correctly.
 
-## 7a. Public self-submit intake (tokenized, no login)
+## 7a. Public self-submit intake (ONE shared link, no login)
 
-So the registry can be populated at scale, each employee gets a **personal, no-login link** to self-submit their profiles:
+So the registry can be populated at scale, there is **one shared link** sent to the whole team. Each employee identifies themselves by their **work email** (no per-person links — a single URL everyone uses):
 
-- **Page:** `/onboarding/social-handles/<token>` (top-level public route, mobile-first). Prefills the employee name; fields: **Instagram (required)**, Facebook, LinkedIn, TikTok. Each field shows a live **Open profile ↗** link so the submitter confirms it loads before saving. Copy states plainly we verify comments, not likes.
-- **Token:** a stateless **HMAC-signed** token (`base64url(employeeId).sig`), secret from `SOCIAL_HANDLE_FORM_SECRET` (falls back to the always-present `JWT_SECRET`). It authorises exactly one employee — a holder can only read/write *that* employee's handles, nothing else. Reusable (editing/resubmitting is intended); no token table needed.
-- **Endpoints (public, no auth, throttled via `ThrottlerGuard`):** `GET /public/social-handles/:token` (prefill) and `POST /public/social-handles/:token` (submit). Writes are scoped to the token's employee and touch only the social-handle columns.
+- **Page:** `/onboarding/social-handles` (top-level public route, mobile-first). Step 1: enter work email → it's matched (case-insensitive) to the employee's user account, confirming their name and prefilling any existing handles. Step 2: fields **Instagram (required)**, Facebook, LinkedIn, TikTok, YouTube, each with a live **Open profile ↗** link to confirm it loads before saving. Copy states plainly we verify comments, not likes.
+- **Identity by email, not token:** the shared link carries no secret; the email maps to exactly one `Employee` (via its `UserAccount`), and a submission only ever writes that employee's social-handle columns. An unknown email returns a clear "we couldn't find you — use your company email or contact admin". (This replaced an earlier per-employee signed-link design, by product decision — one shared link is simpler to roll out.)
+- **Endpoints (public, no auth, throttled via `ThrottlerGuard`):** `POST /public/social-handles/lookup` (email → name + prefill) and `POST /public/social-handles/submit` (email + handles → upsert).
 - **Validation/normalization** (`social-normalize.ts`, server-authoritative): accepts a handle **or** a full URL per platform, strips `@`/trailing slashes/query params, and returns a canonical openable URL (IG/TikTok also keep a handle). Malformed input is rejected with a clear per-platform message. We only assert the link is **well-formed and opens** — not that the profile exists (no free existence API for LinkedIn/FB/TikTok; IG existence is confirmed downstream by the comment-verification engine). The same normalizer backs the admin editor.
 - **New columns (additive):** Employee `linkedinUrl`, `tiktokHandle`, `youtubeChannelUrl`, `socialHandlesSubmittedAt`.
 - **Platforms collected:** Instagram (required), Facebook, LinkedIn, TikTok, **YouTube**. YouTube is *collection only* for now. A future phase can **verify** YouTube engagement — the YouTube Data API exposes the commenter's channel identity on our own videos, so YT is verifiable like IG (unlike FB, which stays text-only); that phase needs the YT Data API + Google OAuth and is out of scope here.
-- **Admin monitor:** the **Social Handles** page is now a roster showing per-rep submission timestamp, an **Open ↗** link per platform, who's still missing an IG handle, a **Copy link** button for each rep's personal form link, and a per-row **Edit** modal.
+- **Admin monitor:** the **Social Handles** page shows the one shared link (copy / open), per-rep submission timestamp, an **Open ↗** link per platform, who's still missing an IG handle, and a per-row **Edit** modal.
 
 ## 8. Later phases (not in this PR)
 

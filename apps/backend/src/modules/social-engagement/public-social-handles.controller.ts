@@ -1,32 +1,33 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { SocialEngagementService } from './social-engagement.service';
-import { PublicIntakeDto } from './social-engagement.dto';
+import { LookupByEmailDto, PublicIntakeDto } from './social-engagement.dto';
 
 /**
- * PUBLIC (no CRM login) endpoints backing the employee self-submit page at
- * /onboarding/social-handles/<token>. The opaque HMAC-signed token identifies
- * exactly one employee, so a holder can only read/write THAT employee's social
- * handles and nothing else — no login, no other data reachable. Deliberately
- * has no JwtAuthGuard (auth is per-controller in this app — see
- * PublicDownloadsController / PublicConsultPayController). Rate-limited via
- * ThrottlerGuard since it is unauthenticated.
+ * PUBLIC (no CRM login) endpoints behind the ONE shared self-submit page at
+ * /onboarding/social-handles. Employees identify themselves by their work
+ * email, which maps to their Employee record — no per-person links, no roster
+ * exposed, and a submission only ever writes the social-handle columns of the
+ * matched employee. Deliberately has no JwtAuthGuard (auth is per-controller in
+ * this app — see PublicDownloadsController / PublicConsultPayController) and is
+ * ThrottlerGuard rate-limited since it is unauthenticated.
  */
 @UseGuards(ThrottlerGuard)
 @Controller('public/social-handles')
 export class PublicSocialHandlesController {
   constructor(private readonly svc: SocialEngagementService) {}
 
-  /** Prefill: the employee's name + any handles already on file. */
-  @Get(':token')
-  info(@Param('token') token: string) {
-    return this.svc.getPublicIntake(token);
+  /** Step 1 — confirm the email maps to a team member + prefill their handles. */
+  @Post('lookup')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  lookup(@Body() dto: LookupByEmailDto) {
+    return this.svc.lookupByEmail(dto.email);
   }
 
-  /** Submit/resubmit handles. Tighter throttle than the controller default. */
-  @Post(':token')
+  /** Step 2 — submit/resubmit handles for the employee behind the email. */
+  @Post('submit')
   @Throttle({ default: { limit: 12, ttl: 60_000 } })
-  submit(@Param('token') token: string, @Body() dto: PublicIntakeDto) {
-    return this.svc.submitPublicIntake(token, dto);
+  submit(@Body() dto: PublicIntakeDto) {
+    return this.svc.submitByEmail(dto);
   }
 }

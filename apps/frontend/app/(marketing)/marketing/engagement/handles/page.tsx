@@ -31,14 +31,14 @@ export default function SocialHandlesPage() {
   const submittedCount = rows.filter((r) => r.submittedAt).length;
   const missingCount = rows.filter((r) => !r.instagramHandle).length;
 
-  const formLink = (token: string) =>
-    `${typeof window !== 'undefined' ? window.location.origin : ''}/onboarding/social-handles/${token}`;
+  // ONE shared link everyone uses — employees identify by their work email.
+  const sharedLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/onboarding/social-handles`;
 
-  const copyLink = async (token: string, id: string) => {
+  const copyShared = async () => {
     try {
-      await navigator.clipboard.writeText(formLink(token));
-      setCopied(id);
-      setTimeout(() => setCopied((c) => (c === id ? null : c)), 1800);
+      await navigator.clipboard.writeText(sharedLink);
+      setCopied('shared');
+      setTimeout(() => setCopied((c) => (c === 'shared' ? null : c)), 1800);
     } catch {
       /* clipboard blocked — ignore */
     }
@@ -49,7 +49,7 @@ export default function SocialHandlesPage() {
       <PageHeader
         eyebrow="Marketing"
         title="Social Handles"
-        description="Send each rep their personal link to self-submit profiles, and monitor who's filled it in."
+        description="Share one link with the whole team to self-submit profiles, and monitor who's filled it in."
       />
 
       <GlassCard variant="default">
@@ -58,10 +58,25 @@ export default function SocialHandlesPage() {
             <Info size={17} />
           </div>
           <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)', lineHeight: 1.6 }}>
-            Each rep has a <strong>personal self-submit link</strong> (no login) — copy it and send it to them. The{' '}
-            <strong>Instagram handle</strong> is what makes their IG comments verify automatically; the other platforms are for
-            reference (we confirm links are well-formed and open, not that the profile exists). You can also edit any rep&apos;s handles directly.
+            Share <strong>one link</strong> with the whole team (no login) — each person enters their <strong>work email</strong> to
+            identify themselves, then adds their handles. The <strong>Instagram handle</strong> is what makes their IG comments verify
+            automatically; the other platforms are reference (we confirm links are well-formed and open, not that the profile exists).
+            You can also edit any rep&apos;s handles directly below.
           </div>
+        </div>
+      </GlassCard>
+
+      {/* The one shared link to send to all employees. */}
+      <GlassCard variant="default">
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-text-tertiary,#6b7280)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Shared form link</span>
+          <code style={{ flex: 1, minWidth: 200, fontSize: 13, padding: '8px 10px', borderRadius: 8, background: 'var(--sos-border-subtle, rgba(0,0,0,0.05))', color: 'var(--sos-text-primary,#111827)', overflowX: 'auto', whiteSpace: 'nowrap' }}>{sharedLink}</code>
+          <button type="button" onClick={copyShared} style={copyBtn}>
+            {copied === 'shared' ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy link</>}
+          </button>
+          <a href={sharedLink} target="_blank" rel="noopener noreferrer" style={{ ...copyBtn, textDecoration: 'none' }}>
+            <ExternalLink size={14} /> Open
+          </a>
         </div>
       </GlassCard>
 
@@ -100,7 +115,6 @@ export default function SocialHandlesPage() {
                 <th style={{ ...th, textAlign: 'center' }}>LinkedIn</th>
                 <th style={{ ...th, textAlign: 'center' }}>TikTok</th>
                 <th style={{ ...th, textAlign: 'center' }}>YT</th>
-                <th style={{ ...th, width: 170 }}>Self-submit link</th>
                 <th style={th} />
               </tr>
             </thead>
@@ -122,11 +136,6 @@ export default function SocialHandlesPage() {
                   <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.tiktokUrl} missing={!r.tiktokHandle} /></td>
                   <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.youtubeChannelUrl} missing={!r.youtubeChannelUrl} /></td>
                   <td style={cell}>
-                    <button type="button" onClick={() => copyLink(r.formToken, r.employeeId)} style={copyBtn}>
-                      {copied === r.employeeId ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy link</>}
-                    </button>
-                  </td>
-                  <td style={cell}>
                     <button type="button" onClick={() => setEditing(r)} style={iconBtn} aria-label="Edit handles">
                       <Pencil size={14} />
                     </button>
@@ -135,7 +144,7 @@ export default function SocialHandlesPage() {
               ))}
               {!loading && filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ ...cell, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)', padding: 20 }}>
+                  <td colSpan={8} style={{ ...cell, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)', padding: 20 }}>
                     {q ? 'No rep matches your search.' : 'No employees found.'}
                   </td>
                 </tr>

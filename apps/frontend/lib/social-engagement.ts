@@ -74,8 +74,6 @@ export interface HandleRow {
   instagramUrl: string | null;
   tiktokUrl: string | null;
   submittedAt: string | null;
-  /** Signed token for the public self-submit link for this employee. */
-  formToken: string;
 }
 
 export interface SocialStatus {

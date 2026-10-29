@@ -1,23 +1,26 @@
 /**
- * Public (unauthenticated) API for the employee social-handle self-submit page.
- * Talks straight to the token-gated /public/social-handles endpoints — NO auth
- * token is sent. Kept separate from the authed api-client so the public page
- * never pulls in session/refresh logic.
+ * Public (unauthenticated) API for the ONE shared employee social-handle
+ * self-submit page. Employees identify themselves by work email. Talks straight
+ * to the token-free /public/social-handles endpoints — NO auth is sent. Kept
+ * separate from the authed api-client so the public page never pulls in
+ * session/refresh logic.
  */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
-export interface IntakePrefill {
-  name: string;
-  instagram: string | null;
-  facebookUrl: string | null;
-  linkedinUrl: string | null;
-  tiktok: string | null;
-  youtube: string | null;
-  submittedAt: string | null;
+export interface LookupResult {
+  found: boolean;
+  name?: string;
+  instagram?: string | null;
+  facebookUrl?: string | null;
+  linkedinUrl?: string | null;
+  tiktok?: string | null;
+  youtube?: string | null;
+  submittedAt?: string | null;
 }
 
 export interface IntakeSubmitResult {
   ok: boolean;
+  name: string;
   normalized: {
     instagramUrl: string;
     facebookUrl: string | null;
@@ -37,17 +40,27 @@ async function readError(res: Response, fallback: string): Promise<string> {
   }
 }
 
-export async function getIntakePrefill(token: string): Promise<IntakePrefill> {
-  const res = await fetch(`${API_BASE}/public/social-handles/${encodeURIComponent(token)}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(await readError(res, 'This link is invalid or has expired.'));
-  return res.json() as Promise<IntakePrefill>;
+/** Step 1: confirm the email maps to a team member + prefill their handles. */
+export async function lookupByEmail(email: string): Promise<LookupResult> {
+  const res = await fetch(`${API_BASE}/public/social-handles/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await readError(res, 'Could not look up that email. Please try again.'));
+  return res.json() as Promise<LookupResult>;
 }
 
-export async function submitIntake(
-  token: string,
-  body: { instagram: string; facebookUrl?: string; linkedinUrl?: string; tiktok?: string; youtube?: string },
-): Promise<IntakeSubmitResult> {
-  const res = await fetch(`${API_BASE}/public/social-handles/${encodeURIComponent(token)}`, {
+/** Step 2: submit/resubmit handles for the employee behind the email. */
+export async function submitByEmail(body: {
+  email: string;
+  instagram: string;
+  facebookUrl?: string;
+  linkedinUrl?: string;
+  tiktok?: string;
+  youtube?: string;
+}): Promise<IntakeSubmitResult> {
+  const res = await fetch(`${API_BASE}/public/social-handles/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

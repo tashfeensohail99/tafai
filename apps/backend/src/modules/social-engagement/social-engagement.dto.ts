@@ -5,7 +5,7 @@ export class UpdateHandleDto {
   // `null`/'' clears the field; a value is normalised server-side.
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(300)
   instagramHandle?: string | null;
 
   @IsOptional()
@@ -17,6 +17,49 @@ export class UpdateHandleDto {
   @IsString()
   @MaxLength(150)
   facebookDisplayName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  linkedinUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  tiktokHandle?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  youtubeChannelUrl?: string | null;
+}
+
+/** Fields posted by the public self-submit form. Accepts a handle OR a URL;
+ *  normalised + validated per platform server-side. Instagram is required. */
+export class PublicIntakeDto {
+  @IsString()
+  @MaxLength(300)
+  instagram!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  facebookUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  linkedinUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  tiktok?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  youtube?: string;
 }
 
 export class SubmitClaimDto {

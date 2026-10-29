@@ -68,6 +68,14 @@ export interface HandleRow {
   instagramHandle: string | null;
   facebookProfileUrl: string | null;
   facebookDisplayName: string | null;
+  linkedinUrl: string | null;
+  tiktokHandle: string | null;
+  youtubeChannelUrl: string | null;
+  instagramUrl: string | null;
+  tiktokUrl: string | null;
+  submittedAt: string | null;
+  /** Signed token for the public self-submit link for this employee. */
+  formToken: string;
 }
 
 export interface SocialStatus {
@@ -107,7 +115,14 @@ export function getHandles(): Promise<HandleRow[]> {
 
 export function updateHandle(
   employeeId: string,
-  body: { instagramHandle?: string | null; facebookProfileUrl?: string | null; facebookDisplayName?: string | null },
+  body: {
+    instagramHandle?: string | null;
+    facebookProfileUrl?: string | null;
+    facebookDisplayName?: string | null;
+    linkedinUrl?: string | null;
+    tiktokHandle?: string | null;
+    youtubeChannelUrl?: string | null;
+  },
 ): Promise<{ ok: boolean }> {
   return apiFetch(`${BASE}/handles/${employeeId}`, { method: 'PATCH', body: JSON.stringify(body) });
 }

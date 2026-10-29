@@ -1366,6 +1366,13 @@ model Employee {
   instagramHandle     String?        // normalised lowercase, no leading '@'
   facebookProfileUrl  String?
   facebookDisplayName String?
+  linkedinUrl         String?        // canonical linkedin.com/in/… URL
+  tiktokHandle        String?        // normalised lowercase, no leading '@'
+  youtubeChannelUrl   String?        // canonical youtube.com/@handle or /channel/… URL
+  // Set when the employee self-submits via the public tokenized intake form
+  // (/onboarding/social-handles/<token>); NULL = not submitted yet. Drives the
+  // admin "who's filled it in" monitor.
+  socialHandlesSubmittedAt DateTime?
 
   // --- Response-SLA scoring -----------------------------------------------
   // Lifetime tallies of agent replies that landed within / outside the

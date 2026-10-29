@@ -5,6 +5,7 @@ import { SocialGraphService } from './social-graph.service';
 import { SocialEngagementService } from './social-engagement.service';
 import { SocialSweepService } from './social-sweep.service';
 import { SocialEngagementController } from './social-engagement.controller';
+import { PublicSocialHandlesController } from './public-social-handles.controller';
 
 /**
  * Team social-engagement verification — confirms via the Graph API that reps
@@ -20,7 +21,7 @@ import { SocialEngagementController } from './social-engagement.controller';
 @Module({
   imports: [StorageModule],
   providers: [MetaCredentialsService, SocialGraphService, SocialEngagementService, SocialSweepService],
-  controllers: [SocialEngagementController],
+  controllers: [SocialEngagementController, PublicSocialHandlesController],
   exports: [SocialEngagementService, SocialGraphService],
 })
 export class SocialEngagementModule {}

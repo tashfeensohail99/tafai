@@ -116,16 +116,39 @@ export class SocialEngagementService {
 
   // ---------------------------------------------------------------------------
   // Public self-submit intake — ONE shared link, no login. Employees identify
-  // themselves by their work email (the one in the system), which maps to their
-  // Employee record. No per-employee links, no roster exposed.
+  // themselves by NAME + PHONE (matched against the staff directory). No
+  // per-employee links, no roster exposed. Email is avoided because staff have
+  // several (tashfeengroup.com, tashfeenimmigrationsolutions.com, workspace…).
   // ---------------------------------------------------------------------------
 
-  /** Find the employee behind a work email, or null. Email match is case-insensitive. */
-  private async findEmployeeByEmail(rawEmail: string) {
-    const email = (rawEmail ?? '').trim();
-    if (!email) return null;
-    return this.prisma.employee.findFirst({
-      where: { deletedAt: null, user: { email: { equals: email, mode: 'insensitive' } } },
+  /** Last 10 digits of a phone — tolerant of +92 / 0092 / 0 prefixes + spaces. */
+  private phoneKey(raw: string | null | undefined): string {
+    const digits = (raw ?? '').replace(/\D/g, '');
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  }
+
+  private nameKey(raw: string | null | undefined): string {
+    return (raw ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  /**
+   * Match one employee by name + phone against the active staff directory.
+   * Phone (last 10 digits) is the strong key; name disambiguates (e.g. two
+   * people who share a number is impossible, but two share a name). Returns the
+   * single match, or a reason it couldn't resolve.
+   */
+  private async matchEmployee(
+    name: string,
+    phone: string,
+  ): Promise<
+    | { ok: true; employee: { id: string; firstName: string; lastName: string; instagramHandle: string | null; facebookProfileUrl: string | null; linkedinUrl: string | null; tiktokHandle: string | null; youtubeChannelUrl: string | null; socialHandlesSubmittedAt: Date | null } }
+    | { ok: false; reason: 'not_found' | 'ambiguous' }
+  > {
+    const phoneK = this.phoneKey(phone);
+    const nameK = this.nameKey(name);
+
+    const employees = await this.prisma.employee.findMany({
+      where: { deletedAt: null, isActive: true },
       select: {
         id: true,
         firstName: true,
@@ -136,16 +159,40 @@ export class SocialEngagementService {
         tiktokHandle: true,
         youtubeChannelUrl: true,
         socialHandlesSubmittedAt: true,
+        user: { select: { phone: true } },
       },
     });
+
+    const byPhone = phoneK.length >= 7 ? employees.filter((e) => this.phoneKey(e.user?.phone) === phoneK) : [];
+    const byName = nameK ? employees.filter((e) => this.nameKey(`${e.firstName} ${e.lastName}`) === nameK) : [];
+
+    // Prefer the record that matches BOTH, then phone alone, then name alone.
+    const both = byPhone.filter((e) => byName.some((n) => n.id === e.id));
+    const pick =
+      both.length === 1 ? both[0]
+      : byPhone.length === 1 ? byPhone[0]
+      : byName.length === 1 ? byName[0]
+      : null;
+
+    if (!pick) {
+      const anyMatch = byPhone.length + byName.length > 0;
+      return { ok: false, reason: anyMatch ? 'ambiguous' : 'not_found' };
+    }
+    const { user: _user, ...employee } = pick;
+    return { ok: true, employee };
   }
 
-  /** Step 1: confirm who the email belongs to + prefill any handles on file. */
-  async lookupByEmail(email: string) {
-    const e = await this.findEmployeeByEmail(email);
-    if (!e) {
-      return { found: false as const };
-    }
+  private notFoundMessage(reason: 'not_found' | 'ambiguous'): string {
+    return reason === 'ambiguous'
+      ? 'We found more than one match — please check your name and phone number, or contact admin.'
+      : 'We couldn’t match that name and phone number to a team member. Use the name and company number on file, or contact admin.';
+  }
+
+  /** Step 1: confirm the name+phone maps to a team member + prefill handles. */
+  async lookupByIdentity(name: string, phone: string) {
+    const m = await this.matchEmployee(name, phone);
+    if (!m.ok) return { found: false as const };
+    const e = m.employee;
     return {
       found: true as const,
       name: `${e.firstName} ${e.lastName}`.trim(),
@@ -159,13 +206,10 @@ export class SocialEngagementService {
   }
 
   /** Step 2: validate + normalize + upsert handles onto the matched employee. */
-  async submitByEmail(dto: PublicIntakeDto) {
-    const employee = await this.findEmployeeByEmail(dto.email);
-    if (!employee) {
-      throw new NotFoundException(
-        'We couldn’t find a team member with that work email. Please use your company email, or contact admin.',
-      );
-    }
+  async submitByIdentity(dto: PublicIntakeDto) {
+    const m = await this.matchEmployee(dto.name, dto.phone);
+    if (!m.ok) throw new NotFoundException(this.notFoundMessage(m.reason));
+    const employee = m.employee;
 
     // Instagram is required (it's what the verification engine matches on).
     const ig = normalizeSocial('instagram', dto.instagram);

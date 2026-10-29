@@ -31,7 +31,7 @@ export default function SocialHandlesPage() {
   const submittedCount = rows.filter((r) => r.submittedAt).length;
   const missingCount = rows.filter((r) => !r.instagramHandle).length;
 
-  // ONE shared link everyone uses — employees identify by their work email.
+  // ONE shared link everyone uses — employees identify by their name + phone.
   const sharedLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/onboarding/social-handles`;
 
   const copyShared = async () => {
@@ -58,7 +58,7 @@ export default function SocialHandlesPage() {
             <Info size={17} />
           </div>
           <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)', lineHeight: 1.6 }}>
-            Share <strong>one link</strong> with the whole team (no login) — each person enters their <strong>work email</strong> to
+            Share <strong>one link</strong> with the whole team (no login) — each person enters their <strong>name &amp; company phone number</strong> to
             identify themselves, then adds their handles. The <strong>Instagram handle</strong> is what makes their IG comments verify
             automatically; the other platforms are reference (we confirm links are well-formed and open, not that the profile exists).
             You can also edit any rep&apos;s handles directly below.

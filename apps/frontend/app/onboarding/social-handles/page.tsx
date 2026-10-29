@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { lookupByEmail, submitByEmail, previewUrl, type SocialField } from '@/lib/public-social-handles';
+import { lookupByIdentity, submitByIdentity, previewUrl, type SocialField } from '@/lib/public-social-handles';
 
 const NAVY = '#0f2a4a';
 const BLUE = '#2563eb';
@@ -11,8 +11,9 @@ type Step = 'email' | 'form' | 'done';
 
 export default function SocialHandleIntakePage() {
   const [step, setStep] = useState<Step>('email');
-  const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [matchedName, setMatchedName] = useState('');
   const [resubmitting, setResubmitting] = useState(false);
 
   const [instagram, setInstagram] = useState('');
@@ -28,12 +29,12 @@ export default function SocialHandleIntakePage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await lookupByEmail(email.trim());
+      const r = await lookupByIdentity(name.trim(), phone.trim());
       if (!r.found) {
-        setError('We couldn’t find a team member with that work email. Please use your company email, or contact admin.');
+        setError('We couldn’t match that name and phone number. Please use the name and company number on file, or contact admin.');
         return;
       }
-      setName(r.name ?? '');
+      setMatchedName(r.name ?? '');
       setResubmitting(!!r.submittedAt);
       setInstagram(r.instagram ?? '');
       setFacebook(r.facebookUrl ?? '');
@@ -52,8 +53,9 @@ export default function SocialHandleIntakePage() {
     setBusy(true);
     setError(null);
     try {
-      await submitByEmail({
-        email: email.trim(),
+      await submitByIdentity({
+        name: name.trim(),
+        phone: phone.trim(),
         instagram: instagram.trim(),
         facebookUrl: facebook.trim() || undefined,
         linkedinUrl: linkedin.trim() || undefined,
@@ -80,26 +82,39 @@ export default function SocialHandleIntakePage() {
           <Card>
             <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Register your social profiles</h2>
             <p style={{ color: '#475569', fontSize: 13.5, lineHeight: 1.55, margin: '0 0 16px' }}>
-              Enter your <strong>work email</strong> to get started. We&apos;ll match it to your staff record.
+              Enter your <strong>full name</strong> and your <strong>company phone number</strong> so we can match you to your staff record.
             </p>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && email.trim()) void findMe(); }}
-              placeholder="you@company.com"
-              inputMode="email"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              style={inputStyle(false)}
-            />
+            <div style={{ marginBottom: 12 }}>
+              <label style={labelStyle}>Full name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Ayesha Khan"
+                autoCapitalize="words"
+                style={inputStyle(false)}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Company phone number</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && phone.trim()) void findMe(); }}
+                placeholder="e.g. 0300 1234567"
+                inputMode="tel"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                style={inputStyle(false)}
+              />
+            </div>
             {error ? <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 10 }}>{error}</div> : null}
             <button
               type="button"
               onClick={findMe}
-              disabled={busy || !email.trim()}
-              style={{ ...btnPrimary, width: '100%', marginTop: 16, opacity: busy || !email.trim() ? 0.6 : 1 }}
+              disabled={busy || !name.trim() || !phone.trim()}
+              style={{ ...btnPrimary, width: '100%', marginTop: 16, opacity: busy || !name.trim() || !phone.trim() ? 0.6 : 1 }}
             >
               {busy ? 'Checking…' : 'Continue'}
             </button>
@@ -108,7 +123,7 @@ export default function SocialHandleIntakePage() {
           <Card>
             <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Your social profiles</h2>
             <p style={{ color: '#475569', fontSize: 13.5, lineHeight: 1.55, margin: '0 0 6px' }}>
-              Submitting as <strong>{name}</strong>{' '}
+              Submitting as <strong>{matchedName}</strong>{' '}
               <button type="button" onClick={() => { setStep('email'); setError(null); }} style={linkBtn}>(not you?)</button>
             </p>
             <p style={{ color: '#64748b', fontSize: 12.5, lineHeight: 1.5, margin: '0 0 18px', background: '#eef2ff', borderRadius: 10, padding: '10px 12px' }}>
@@ -135,7 +150,7 @@ export default function SocialHandleIntakePage() {
           <Card>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 40 }}>✅</div>
-              <h2 style={{ fontSize: 18, margin: '8px 0 6px' }}>Thank you, {name.split(' ')[0]}!</h2>
+              <h2 style={{ fontSize: 18, margin: '8px 0 6px' }}>Thank you, {matchedName.split(' ')[0]}!</h2>
               <p style={{ color: '#475569', fontSize: 14, lineHeight: 1.55, margin: 0 }}>
                 Your social profiles are saved. You can reopen this page anytime to update them.
               </p>
@@ -194,6 +209,8 @@ function HandleField({
 function Card({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fff', borderRadius: 16, padding: 20, boxShadow: '0 10px 40px rgba(15,42,74,0.08)' }}>{children}</div>;
 }
+
+const labelStyle: React.CSSProperties = { display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5 };
 
 function inputStyle(bad: boolean): React.CSSProperties {
   return {

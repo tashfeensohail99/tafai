@@ -115,11 +115,15 @@ Services: `Postgres` (pgvector enabled), `Redis`, `backend` (root
 frontend `https://frontend-production-488d.up.railway.app`, backend
 `https://backend-production-c877.up.railway.app`.
 
-Note: Railway kept both custom domains in "validating ownership" for hours after
-the CNAMEs propagated, so the frontend is currently built with
-`NEXT_PUBLIC_API_URL=https://backend-production-c877.up.railway.app` (prospects never
-see the API hostname). Once the certificate for `demo-api.summitautomates.com` is
-issued, switch that variable back and redeploy the frontend.
+Note on custom domains: a CNAME alone left both domains stuck in "validating
+ownership" for hours. Railway also wants an ownership TXT record per domain:
+`_railway-verify.<host>` = `railway-verify=<token>`, where the host and token come
+from the `customDomain { status { verificationDnsHost verificationToken } }`
+GraphQL fields (the dashboard does not show them). Both records are in place on
+Hostinger; certificates were issued within minutes of adding them.
+
+The sales-team guide is `docs/demo-sales-guide.pdf` (regenerate with
+`python docs/demo-sales-guide.py <login.jpg> <inbox.jpg>`).
 
 Deploy from the feature branch with the CLI (the services are not connected
 to GitHub; connect them in the Railway dashboard if you prefer auto-deploys):

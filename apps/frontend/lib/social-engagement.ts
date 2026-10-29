@@ -70,6 +70,7 @@ export interface HandleRow {
   facebookDisplayName: string | null;
   linkedinUrl: string | null;
   tiktokHandle: string | null;
+  youtubeChannelUrl: string | null;
   instagramUrl: string | null;
   tiktokUrl: string | null;
   submittedAt: string | null;
@@ -120,6 +121,7 @@ export function updateHandle(
     facebookDisplayName?: string | null;
     linkedinUrl?: string | null;
     tiktokHandle?: string | null;
+    youtubeChannelUrl?: string | null;
   },
 ): Promise<{ ok: boolean }> {
   return apiFetch(`${BASE}/handles/${employeeId}`, { method: 'PATCH', body: JSON.stringify(body) });

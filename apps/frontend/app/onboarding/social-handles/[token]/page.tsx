@@ -26,6 +26,7 @@ export default function SocialHandleIntakePage() {
   const [facebook, setFacebook] = useState('');
   const [linkedin, setLinkedin] = useState('');
   const [tiktok, setTiktok] = useState('');
+  const [youtube, setYoutube] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +43,7 @@ export default function SocialHandleIntakePage() {
         setFacebook(p.facebookUrl ?? '');
         setLinkedin(p.linkedinUrl ?? '');
         setTiktok(p.tiktok ?? '');
+        setYoutube(p.youtube ?? '');
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : 'This link is invalid or has expired.'))
       .finally(() => setLoading(false));
@@ -60,6 +62,7 @@ export default function SocialHandleIntakePage() {
         facebookUrl: facebook.trim() || undefined,
         linkedinUrl: linkedin.trim() || undefined,
         tiktok: tiktok.trim() || undefined,
+        youtube: youtube.trim() || undefined,
       });
       setDone(true);
     } catch (e) {
@@ -120,6 +123,7 @@ export default function SocialHandleIntakePage() {
             <HandleField label="Facebook profile" field="facebook" placeholder="facebook.com/you or username" value={facebook} onChange={setFacebook} />
             <HandleField label="LinkedIn profile" field="linkedin" placeholder="linkedin.com/in/you" value={linkedin} onChange={setLinkedin} />
             <HandleField label="TikTok username" field="tiktok" placeholder="@yourusername" value={tiktok} onChange={setTiktok} />
+            <HandleField label="YouTube channel" field="youtube" placeholder="youtube.com/@yourchannel" value={youtube} onChange={setYoutube} />
 
             {error ? (
               <div style={{ color: '#b91c1c', fontSize: 13, margin: '4px 0 12px' }}>{error}</div>

@@ -69,6 +69,7 @@ export class SocialEngagementService {
         facebookDisplayName: true,
         linkedinUrl: true,
         tiktokHandle: true,
+        youtubeChannelUrl: true,
         socialHandlesSubmittedAt: true,
       },
     });
@@ -81,6 +82,7 @@ export class SocialEngagementService {
       facebookDisplayName: e.facebookDisplayName,
       linkedinUrl: e.linkedinUrl,
       tiktokHandle: e.tiktokHandle,
+      youtubeChannelUrl: e.youtubeChannelUrl,
       instagramUrl: instagramUrl(e.instagramHandle),
       tiktokUrl: tiktokUrl(e.tiktokHandle),
       submittedAt: e.socialHandlesSubmittedAt,
@@ -98,6 +100,7 @@ export class SocialEngagementService {
       facebookDisplayName?: string | null;
       linkedinUrl?: string | null;
       tiktokHandle?: string | null;
+      youtubeChannelUrl?: string | null;
     },
   ) {
     const exists = await this.prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true } });
@@ -109,6 +112,7 @@ export class SocialEngagementService {
     if (dto.facebookDisplayName !== undefined) data.facebookDisplayName = dto.facebookDisplayName?.trim() || null;
     if (dto.linkedinUrl !== undefined) data.linkedinUrl = normalizeSocial('linkedin', dto.linkedinUrl)?.url ?? null;
     if (dto.tiktokHandle !== undefined) data.tiktokHandle = normalizeSocial('tiktok', dto.tiktokHandle)?.handle ?? null;
+    if (dto.youtubeChannelUrl !== undefined) data.youtubeChannelUrl = normalizeSocial('youtube', dto.youtubeChannelUrl)?.url ?? null;
 
     await this.prisma.employee.update({ where: { id: employeeId }, data });
     return { ok: true };
@@ -161,6 +165,7 @@ export class SocialEngagementService {
         facebookProfileUrl: true,
         linkedinUrl: true,
         tiktokHandle: true,
+        youtubeChannelUrl: true,
         socialHandlesSubmittedAt: true,
       },
     });
@@ -171,6 +176,7 @@ export class SocialEngagementService {
       facebookUrl: e.facebookProfileUrl,
       linkedinUrl: e.linkedinUrl,
       tiktok: e.tiktokHandle,
+      youtube: e.youtubeChannelUrl,
       submittedAt: e.socialHandlesSubmittedAt,
     };
   }
@@ -190,6 +196,7 @@ export class SocialEngagementService {
     const fb = normalizeSocial('facebook', dto.facebookUrl);
     const li = normalizeSocial('linkedin', dto.linkedinUrl);
     const tt = normalizeSocial('tiktok', dto.tiktok);
+    const yt = normalizeSocial('youtube', dto.youtube);
 
     await this.prisma.employee.update({
       where: { id: employeeId },
@@ -198,6 +205,7 @@ export class SocialEngagementService {
         facebookProfileUrl: fb?.url ?? null,
         linkedinUrl: li?.url ?? null,
         tiktokHandle: tt?.handle ?? null,
+        youtubeChannelUrl: yt?.url ?? null,
         socialHandlesSubmittedAt: new Date(),
       },
     });
@@ -208,6 +216,7 @@ export class SocialEngagementService {
         facebookUrl: fb?.url ?? null,
         linkedinUrl: li?.url ?? null,
         tiktokUrl: tt?.url ?? null,
+        youtubeUrl: yt?.url ?? null,
       },
     };
   }

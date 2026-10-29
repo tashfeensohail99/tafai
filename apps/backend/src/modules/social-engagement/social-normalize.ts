@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-export type SocialField = 'instagram' | 'facebook' | 'linkedin' | 'tiktok';
+export type SocialField = 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'youtube';
 
 export interface NormalizedSocial {
   /** Canonical handle (instagram/tiktok). Undefined for URL-only platforms. */
@@ -32,6 +32,8 @@ export function normalizeSocial(field: SocialField, raw: string | null | undefin
       return normalizeLinkedin(input);
     case 'tiktok':
       return normalizeTiktok(input);
+    case 'youtube':
+      return normalizeYoutube(input);
   }
 }
 
@@ -135,6 +137,35 @@ function normalizeTiktok(input: string): NormalizedSocial {
     throw new BadRequestException('Enter a valid TikTok username (letters, numbers, “.” and “_”).');
   }
   return { handle, url: `https://www.tiktok.com/@${handle}` };
+}
+
+function normalizeYoutube(input: string): NormalizedSocial {
+  const u = asUrl(input);
+  if (u) {
+    if (!/(^|\.)(youtube\.com|youtu\.be)$/i.test(u.hostname)) {
+      throw new BadRequestException('That doesn’t look like a YouTube link. Use youtube.com/@yourchannel.');
+    }
+    const parts = u.pathname.split('/').filter(Boolean);
+    const first = parts[0] ?? '';
+    // Handle form: /@name
+    if (first.startsWith('@')) {
+      const h = first.slice(1).toLowerCase();
+      if (/^[a-z0-9._-]{3,30}$/.test(h)) return { url: `https://www.youtube.com/@${h}` };
+    }
+    // Canonical forms: /channel/UC..., /c/Name, /user/Name
+    const kind = first.toLowerCase();
+    const slug = parts[1] ?? '';
+    if ((kind === 'channel' || kind === 'c' || kind === 'user') && /^[a-zA-Z0-9._-]{2,}$/.test(slug)) {
+      return { url: `https://www.youtube.com/${kind}/${slug}` };
+    }
+    throw new BadRequestException('Paste your channel link (youtube.com/@you, /channel/… or /c/…).');
+  }
+  // Bare @handle or handle
+  const h = input.replace(/^@+/, '').toLowerCase();
+  if (!/^[a-z0-9._-]{3,30}$/.test(h)) {
+    throw new BadRequestException('Enter your YouTube @handle or paste your channel link.');
+  }
+  return { url: `https://www.youtube.com/@${h}` };
 }
 
 /** Canonical openable URL for a stored value, or null. Used by read responses. */

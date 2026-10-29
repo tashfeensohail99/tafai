@@ -99,6 +99,7 @@ export default function SocialHandlesPage() {
                 <th style={{ ...th, textAlign: 'center' }}>FB</th>
                 <th style={{ ...th, textAlign: 'center' }}>LinkedIn</th>
                 <th style={{ ...th, textAlign: 'center' }}>TikTok</th>
+                <th style={{ ...th, textAlign: 'center' }}>YT</th>
                 <th style={{ ...th, width: 170 }}>Self-submit link</th>
                 <th style={th} />
               </tr>
@@ -119,6 +120,7 @@ export default function SocialHandlesPage() {
                   <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.facebookProfileUrl} missing={!r.facebookProfileUrl} /></td>
                   <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.linkedinUrl} missing={!r.linkedinUrl} /></td>
                   <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.tiktokUrl} missing={!r.tiktokHandle} /></td>
+                  <td style={{ ...cell, textAlign: 'center' }}><LinkCell url={r.youtubeChannelUrl} missing={!r.youtubeChannelUrl} /></td>
                   <td style={cell}>
                     <button type="button" onClick={() => copyLink(r.formToken, r.employeeId)} style={copyBtn}>
                       {copied === r.employeeId ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy link</>}
@@ -133,7 +135,7 @@ export default function SocialHandlesPage() {
               ))}
               {!loading && filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ ...cell, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)', padding: 20 }}>
+                  <td colSpan={9} style={{ ...cell, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)', padding: 20 }}>
                     {q ? 'No rep matches your search.' : 'No employees found.'}
                   </td>
                 </tr>
@@ -164,6 +166,7 @@ function EditModal({ row, onClose, onSaved }: { row: HandleRow; onClose: () => v
   const [facebook, setFacebook] = useState(row.facebookProfileUrl ?? '');
   const [linkedin, setLinkedin] = useState(row.linkedinUrl ?? '');
   const [tiktok, setTiktok] = useState(row.tiktokHandle ?? '');
+  const [youtube, setYoutube] = useState(row.youtubeChannelUrl ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -176,6 +179,7 @@ function EditModal({ row, onClose, onSaved }: { row: HandleRow; onClose: () => v
         facebookProfileUrl: facebook.trim() || null,
         linkedinUrl: linkedin.trim() || null,
         tiktokHandle: tiktok.trim() || null,
+        youtubeChannelUrl: youtube.trim() || null,
       });
       onSaved();
     } catch (e) {
@@ -195,6 +199,7 @@ function EditModal({ row, onClose, onSaved }: { row: HandleRow; onClose: () => v
           <FormInput label="Facebook profile" value={facebook} onChange={(e) => setFacebook(e.target.value)} placeholder="facebook.com/… or username" />
           <FormInput label="LinkedIn profile" value={linkedin} onChange={(e) => setLinkedin(e.target.value)} placeholder="linkedin.com/in/…" />
           <FormInput label="TikTok username" value={tiktok} onChange={(e) => setTiktok(e.target.value)} placeholder="@username" />
+          <FormInput label="YouTube channel" value={youtube} onChange={(e) => setYoutube(e.target.value)} placeholder="youtube.com/@channel" />
           {err ? <div className="sos-help sos-help--error">{err}</div> : null}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
             <button type="button" onClick={onClose} style={ghostBtn}>Cancel</button>

@@ -12,6 +12,7 @@ export interface IntakePrefill {
   facebookUrl: string | null;
   linkedinUrl: string | null;
   tiktok: string | null;
+  youtube: string | null;
   submittedAt: string | null;
 }
 
@@ -22,6 +23,7 @@ export interface IntakeSubmitResult {
     facebookUrl: string | null;
     linkedinUrl: string | null;
     tiktokUrl: string | null;
+    youtubeUrl: string | null;
   };
 }
 
@@ -43,7 +45,7 @@ export async function getIntakePrefill(token: string): Promise<IntakePrefill> {
 
 export async function submitIntake(
   token: string,
-  body: { instagram: string; facebookUrl?: string; linkedinUrl?: string; tiktok?: string },
+  body: { instagram: string; facebookUrl?: string; linkedinUrl?: string; tiktok?: string; youtube?: string },
 ): Promise<IntakeSubmitResult> {
   const res = await fetch(`${API_BASE}/public/social-handles/${encodeURIComponent(token)}`, {
     method: 'POST',
@@ -54,7 +56,7 @@ export async function submitIntake(
   return res.json() as Promise<IntakeSubmitResult>;
 }
 
-export type SocialField = 'instagram' | 'facebook' | 'linkedin' | 'tiktok';
+export type SocialField = 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'youtube';
 
 /**
  * Best-effort client-side preview URL for the live "Open profile ↗" link.
@@ -99,6 +101,13 @@ export function previewUrl(field: SocialField, raw: string): string | null {
       }
       const h = seg();
       return /^[a-zA-Z0-9\-_]{3,}$/.test(h) ? `https://www.linkedin.com/in/${h}` : null;
+    }
+    case 'youtube': {
+      if (hasUrl && /youtube\.com|youtu\.be/i.test(input)) {
+        return /^https?:\/\//i.test(input) ? input : `https://${input}`;
+      }
+      const h = seg().toLowerCase();
+      return /^[a-z0-9._-]{3,30}$/.test(h) ? `https://www.youtube.com/@${h}` : null;
     }
   }
 }

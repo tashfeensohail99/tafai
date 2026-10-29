@@ -27,6 +27,11 @@ export class UpdateHandleDto {
   @IsString()
   @MaxLength(300)
   tiktokHandle?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  youtubeChannelUrl?: string | null;
 }
 
 /** Fields posted by the public self-submit form. Accepts a handle OR a URL;
@@ -50,6 +55,11 @@ export class PublicIntakeDto {
   @IsString()
   @MaxLength(300)
   tiktok?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  youtube?: string;
 }
 
 export class SubmitClaimDto {

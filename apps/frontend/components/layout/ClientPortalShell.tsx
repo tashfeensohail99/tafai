@@ -13,6 +13,7 @@ import {
   User,
   X,
 } from 'lucide-react';
+import { BrandName } from '@/components/layout/BrandName';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ThemeToggle } from './ThemeToggle';
@@ -111,7 +112,7 @@ function PortalSidebar({
           </div>
           <div className="sos-sidebar__brand-text">
             <div className="sos-sidebar__brand-name">Client Portal</div>
-            <div className="sos-sidebar__brand-tagline">Tashfeen Immigration</div>
+            <div className="sos-sidebar__brand-tagline"><BrandName variant="short" /></div>
           </div>
           <button
             type="button"

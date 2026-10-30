@@ -241,7 +241,7 @@ export function AttendanceEnrollmentPage() {
               <Field label="Last name"><FormInput value={aLast} onChange={(e) => setALast(e.target.value)} /></Field>
             </div>
             <Field label="Email (required — used as the login)">
-              <FormInput type="email" value={aEmail} onChange={(e) => setAEmail(e.target.value)} placeholder="person@tashfeenimmigrationsolutions.com" />
+              <FormInput type="email" value={aEmail} onChange={(e) => setAEmail(e.target.value)} placeholder="person@company.com" />
             </Field>
             <Field label="Role (required)">
               <select

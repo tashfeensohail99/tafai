@@ -26,7 +26,7 @@ import { matchAllTokens } from '../../common/search/multi-word-search';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
 import {
   AddProofsDto,
   CreateFinanceHandoverDto,
@@ -2174,6 +2174,27 @@ export class FinanceService {
    * copy with current invoice state (paid amount may have changed since
    * the original render).
    */
+  /**
+   * Bytes of a receipt's PDF. Renders it when no key is stored, and renders it
+   * again when the stored object is gone — LOCAL storage after a restart, or
+   * a demo row whose key points at production's bucket.
+   */
+  private async receiptPdfBytes(receiptId: string, key: string | null): Promise<{ key: string; bytes: Buffer }> {
+    const render = async (): Promise<string> => {
+      const regenerated = await this.regenerateReceiptPdf(receiptId);
+      if (!regenerated.pdfStorageKey) throw new BadRequestException('Could not generate the receipt PDF.');
+      return regenerated.pdfStorageKey;
+    };
+    let k = key ?? (await render());
+    try {
+      return { key: k, bytes: (await this.storage.download(k)).bytes };
+    } catch (err) {
+      if (!(err instanceof StorageObjectMissingError)) throw err;
+      k = await render();
+      return { key: k, bytes: (await this.storage.download(k)).bytes };
+    }
+  }
+
   private async regenerateReceiptPdf(receiptId: string) {
     const receipt = await this.prisma.receipt.findUnique({
       where: { id: receiptId },
@@ -2271,17 +2292,12 @@ export class FinanceService {
         : 'Client';
 
     // Make sure a rendered PDF exists, then pull its bytes to attach.
-    if (!receipt.pdfStorageKey) {
-      await this.regenerateReceiptPdf(receiptId);
-    }
+    const file = await this.receiptPdfBytes(receiptId, receipt.pdfStorageKey);
     const fresh = await this.prisma.receipt.findUnique({
       where: { id: receiptId },
-      select: { pdfStorageKey: true, receiptNumber: true, amount: true, currency: true },
+      select: { receiptNumber: true, amount: true, currency: true },
     });
-    if (!fresh?.pdfStorageKey) {
-      throw new BadRequestException('Could not generate the receipt PDF to send. Try again.');
-    }
-    const file = await this.storage.download(fresh.pdfStorageKey);
+    if (!fresh) throw new NotFoundException('Receipt not found');
 
     const amountLabel = `${fresh.currency} ${Number(fresh.amount).toLocaleString('en-US', {
       minimumFractionDigits: 2,
@@ -2325,17 +2341,7 @@ export class FinanceService {
       select: { pdfStorageKey: true, receiptNumber: true },
     });
     if (!receipt) throw new NotFoundException('Receipt not found');
-    if (!receipt.pdfStorageKey) {
-      await this.regenerateReceiptPdf(receiptId);
-      receipt = await this.prisma.receipt.findUnique({
-        where: { id: receiptId },
-        select: { pdfStorageKey: true, receiptNumber: true },
-      });
-      if (!receipt?.pdfStorageKey) {
-        throw new BadRequestException('Could not generate the receipt PDF.');
-      }
-    }
-    const file = await this.storage.download(receipt.pdfStorageKey);
+    const file = await this.receiptPdfBytes(receiptId, receipt.pdfStorageKey);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',

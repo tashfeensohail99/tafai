@@ -2742,7 +2742,7 @@ model FinanceHandover {
 /// transfers can carry every transfer's proof, and finance can come back later
 /// to add the next one. Purely additive; the single-proof flow is untouched.
 model FinanceProof {
-  id               String    @id @default(uuid())
+  id               String   @id @default(uuid())
   /// The handover this proof belongs to (set at record time). Nullable because
   /// a proof may instead be anchored directly to a Payment (added after verify).
   handoverId       String?
@@ -2753,7 +2753,7 @@ model FinanceProof {
   mimeType         String?
   sizeBytes        Int?
   uploadedByUserId String?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime @default(now())
 
   handover FinanceHandover? @relation(fields: [handoverId], references: [id], onDelete: Cascade)
   payment  Payment?         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
@@ -3887,7 +3887,7 @@ model ClientDocumentVersion {
 /// not the DB (Postgres treats NULL parents as distinct, and filesystems allow
 /// "Folder (2)" style disambiguation anyway).
 model DatabankFolder {
-  id              String    @id @default(uuid())
+  id              String             @id @default(uuid())
   // A folder is EITHER client-scoped (clientId set) OR an associate's personal
   // working folder (ownerUserId set) — exactly one is non-null. ownerUserId is a
   // plain UserAccount id (cross-schema; no FK). Personal folders are visible to
@@ -3900,8 +3900,8 @@ model DatabankFolder {
   // the calling portal at creation; existing rows backfill to PROCESSING.
   department      DatabankDepartment @default(PROCESSING)
   createdByUserId String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
   // Soft delete — a deleted folder (and its subtree) is recoverable, never
   // hard-removed by normal use. FK cascades only fire on a rare hard delete.
   deletedAt       DateTime?
@@ -6631,5 +6631,49 @@ model AttendancePunch {
   @@index([employeeId, punchedAt])
   @@index([punchedAt])
   @@map("attendance_punches")
+  @@schema("core")
+}
+
+// =============================================================================
+// Sales demo — prospect sign-in links (see apps/backend/src/modules/demo)
+// =============================================================================
+
+/// A revocable, expiring link that signs a prospect into the demo as the demo
+/// admin or demo agent account. Only the SHA-256 of the token is stored.
+model DemoAccessLink {
+  id              String    @id @default(uuid())
+  label           String
+  tokenHash       String    @unique
+  tokenTail       String
+  /// UserAccount the link signs in as (demo admin / demo agent).
+  userId          String
+  role            String
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  maxUses         Int?
+  useCount        Int       @default(0)
+  lastUsedAt      DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  uses DemoAccessLinkUse[]
+
+  @@index([expiresAt])
+  @@map("demo_access_links")
+  @@schema("core")
+}
+
+/// One row per redemption — who used which link, from where, when.
+model DemoAccessLinkUse {
+  id        String   @id @default(uuid())
+  linkId    String
+  usedAt    DateTime @default(now())
+  ipAddress String?
+  userAgent String?
+
+  link DemoAccessLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, usedAt])
+  @@map("demo_access_link_uses")
   @@schema("core")
 }

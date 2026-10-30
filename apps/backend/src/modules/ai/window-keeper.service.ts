@@ -7,6 +7,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
+import { brandShortName } from '../../common/demo-mode';
 import {
   AppointmentStatus,
   Prisma,
@@ -293,12 +294,12 @@ function cleanFirstName(raw: string | null | undefined): string | null {
 
 function composeNudge(firstName: string | null): string {
   const greet = firstName ? `Hi ${firstName},` : 'Hi,';
-  return `${greet} just checking in — are you still considering your immigration options? I'm here whenever you'd like to pick things up. — Tashfeen Immigration`;
+  return `${greet} just checking in — are you still considering your immigration options? I'm here whenever you'd like to pick things up. — ${brandShortName()}`;
 }
 
 /** Email-collection ask — sent inside the still-open window. The lead's reply
  *  is captured by the orchestrator's ASK_EMAIL handler. */
 function askEmailBody(firstName: string | null): string {
   const greet = firstName ? `Hi ${firstName},` : 'Hi,';
-  return `${greet} so we can send your consultation details and important updates by email, could you share your best email address? Just reply here. — Tashfeen Immigration`;
+  return `${greet} so we can send your consultation details and important updates by email, could you share your best email address? Just reply here. — ${brandShortName()}`;
 }

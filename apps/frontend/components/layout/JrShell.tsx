@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 
 // Judicial Review workspace shell — mirrors ProcessingShell.
 // Login-gated (same STAFF_ROLES as the old /jr prototype), a permission-gated
@@ -207,7 +208,7 @@ export function JrShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">Judicial Review</div>
             </div>
             <button

@@ -615,7 +615,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
               {/* Paper */}
               <div style={{ background: '#fff', borderRadius: 6, boxShadow: '0 1px 6px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
                 <div style={{ background: '#0b1f3a', color: '#f8fafc', padding: '12px 22px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontWeight: 800, letterSpacing: '1px', fontSize: 13 }}>TASHFEEN</span>
+                  <span style={{ fontWeight: 800, letterSpacing: '1px', fontSize: 13 }}>AGREEMENT</span>
                   <span style={{ fontSize: 9, letterSpacing: '2px', color: '#cbd5e1' }}>IMMIGRATION SOLUTIONS</span>
                 </div>
                 <div style={{ height: 3, background: '#d6a84f' }} />

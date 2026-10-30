@@ -34,6 +34,11 @@ ENV NEXT_PUBLIC_DATABANK_UPLOAD_V2=$NEXT_PUBLIC_DATABANK_UPLOAD_V2
 # Databank rebuilt explorer (folder tree): off | on (opt out per browser with ?explorerV2=0)
 ARG NEXT_PUBLIC_DATABANK_EXPLORER_V2=off
 ENV NEXT_PUBLIC_DATABANK_EXPLORER_V2=$NEXT_PUBLIC_DATABANK_EXPLORER_V2
+# Sales demo: brand shown before /config loads + tab title; DEMO_MODE hint.
+ARG NEXT_PUBLIC_BRAND_NAME=Tashfeen
+ENV NEXT_PUBLIC_BRAND_NAME=$NEXT_PUBLIC_BRAND_NAME
+ARG NEXT_PUBLIC_DEMO_MODE=false
+ENV NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE
 ENV NEXT_TELEMETRY_DISABLED=1
 # Ensure public dir exists even if empty (required by Next.js standalone COPY)
 RUN mkdir -p public

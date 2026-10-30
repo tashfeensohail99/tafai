@@ -20,7 +20,10 @@
     "db:migrate:prod": "prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "demo:sync": "ts-node -r tsconfig-paths/register src/modules/demo/cli/sync.ts",
+    "demo:leak-check": "ts-node -r tsconfig-paths/register src/modules/demo/cli/leak-check.ts",
+    "demo:seed": "ts-node -r tsconfig-paths/register src/modules/demo/cli/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -57,6 +60,7 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.15.2",
+    "pg": "^8.23.1",
     "puppeteer-core": "^23.11.1",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
@@ -79,6 +83,7 @@
     "@types/papaparse": "^5.3.16",
     "@types/passport-jwt": "^4.0.1",
     "@types/pdfkit": "^0.17.6",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@types/supertest": "^7.2.0",
     "@types/uuid": "^10.0.0",

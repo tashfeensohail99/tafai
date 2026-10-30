@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createSign } from 'crypto';
 import * as https from 'https';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { isDemoMode } from '../../common/demo-mode';
 import { ApiKeysService } from '../api-keys/api-keys.service';
 import {
   base64url,
@@ -48,6 +49,10 @@ export class PushService {
       tag?: string | null;
     },
   ): Promise<void> {
+    if (isDemoMode()) {
+      this.log.log(`[demo] push blocked for user ${userId}`);
+      return; // DEMO_MODE: no push ever reaches a real device
+    }
     try {
       const devices = await this.prisma.deviceToken.findMany({
         where: { userId },
@@ -80,6 +85,10 @@ export class PushService {
     data: Record<string, string>,
     opts?: { ttlSeconds?: number },
   ): Promise<void> {
+    if (isDemoMode()) {
+      this.log.log(`[demo] push blocked for user ${userId}`);
+      return; // DEMO_MODE: no push ever reaches a real device
+    }
     try {
       const devices = await this.prisma.deviceToken.findMany({
         where: { userId },

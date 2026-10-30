@@ -21,7 +21,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
 import { resolveSignedUpload, type UploadedFileLike } from '../../common/pdf/merge-to-pdf';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import {
@@ -788,10 +788,17 @@ export class AgreementsService {
     // may have been cleared (e.g. by the layout-fix backfill), and a send must
     // never hard-fail. Regenerating also means the client always receives the
     // current, correctly-paginated document.
-    let pdfBytes: Buffer;
+    let pdfBytes: Buffer | null = null;
     if (a.generatedPdfKey) {
-      pdfBytes = (await this.storage.download(a.generatedPdfKey)).bytes;
-    } else {
+      try {
+        pdfBytes = (await this.storage.download(a.generatedPdfKey)).bytes;
+      } catch (err) {
+        // Object gone (LOCAL storage after a restart, or a demo row keyed to
+        // production's bucket): render it again below.
+        if (!(err instanceof StorageObjectMissingError)) throw err;
+      }
+    }
+    if (!pdfBytes) {
       pdfBytes = await this.previewPdf(id);
       const key = `agreements/preview/${id}.pdf`;
       await this.storage.uploadAt(key, pdfBytes, 'application/pdf');

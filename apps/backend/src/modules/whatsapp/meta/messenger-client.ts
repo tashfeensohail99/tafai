@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import { randomUUID } from 'node:crypto';
 import { Agent as HttpsAgent } from 'node:https';
 import type { MetaSendResponse } from './cloud-client';
 
@@ -26,6 +27,8 @@ export interface MessengerClientConfig {
   pageId: string;
   accessToken: string;
   baseUrl?: string;
+  /** DEMO_MODE: short-circuit every send with a synthetic accept (see cloud-client). */
+  demoBlocked?: boolean;
 }
 
 export type MessengerAttachmentType = 'image' | 'video' | 'audio' | 'file';
@@ -38,9 +41,11 @@ interface RawMessengerSendResponse {
 export class MessengerCloudClient {
   private readonly http: AxiosInstance;
   private readonly pageId: string;
+  private readonly demoBlocked: boolean;
 
   constructor(cfg: MessengerClientConfig) {
     this.pageId = cfg.pageId;
+    this.demoBlocked = !!cfg.demoBlocked;
     this.http = axios.create({
       baseURL: cfg.baseUrl ?? `https://graph.facebook.com/${cfg.apiVersion}`,
       headers: {
@@ -82,6 +87,11 @@ export class MessengerCloudClient {
   }
 
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
+    if (this.demoBlocked) {
+      // DEMO_MODE: never reach the Page Send API; return a synthetic accept.
+      console.info(`[demo] blocked Messenger send on page ${this.pageId}`);
+      return { messaging_product: 'whatsapp', contacts: [], messages: [{ id: `m_demo-${randomUUID()}` }] } as MetaSendResponse;
+    }
     try {
       const res = await this.http.post<RawMessengerSendResponse>(`/${this.pageId}/messages`, body);
       return {

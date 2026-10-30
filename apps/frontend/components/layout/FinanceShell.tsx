@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 // Finance workspace shell — parallel to EmployeeShell.
 // No theme provider here — the root layout owns that. We only consume
 // useTheme via ThemeToggle in the topbar.
@@ -181,7 +182,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">Finance OS</div>
             </div>
             <button

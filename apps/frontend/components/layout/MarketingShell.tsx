@@ -1,6 +1,7 @@
 'use client';
 
 import { SystemAlertBanner } from '@/components/layout/SystemAlertBanner';
+import { BrandName } from '@/components/layout/BrandName';
 // Marketing workspace shell — mirrors ReceptionShell / ProcessingShell.
 // A marketing-role user logs in and lands here; the Overview is home.
 
@@ -223,7 +224,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
               <Megaphone size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tashfeen</div>
+              <div className="sos-sidebar__brand-name"><BrandName /></div>
               <div className="sos-sidebar__brand-tagline">Marketing OS</div>
             </div>
             <button

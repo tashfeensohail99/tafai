@@ -264,7 +264,7 @@ function EmailComposeModal({
             </div>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Email {name}</div>
-              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Sent from Tashfeen · logged on the case</div>
+              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Sent from the CRM · logged on the case</div>
             </div>
           </div>
           <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--sos-text-muted)' }}>

@@ -64,6 +64,7 @@ import { FaceAttendanceModule } from './modules/face-attendance/face-attendance.
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { TelephonyModule } from './modules/telephony/telephony.module';
 import { JudicialReviewModule } from './modules/judicial-review/judicial-review.module';
+import { DemoModule } from './modules/demo/demo.module';
 
 @Module({
   imports: [
@@ -138,6 +139,7 @@ import { JudicialReviewModule } from './modules/judicial-review/judicial-review.
     PayrollModule,
     TelephonyModule,
     JudicialReviewModule,
+    DemoModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

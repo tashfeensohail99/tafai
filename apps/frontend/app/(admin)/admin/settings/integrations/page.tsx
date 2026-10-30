@@ -245,7 +245,7 @@ interface ChannelFormProps {
 }
 
 function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
-  const [label, setLabel] = useState(initial?.label ?? 'Tashfeen Main');
+  const [label, setLabel] = useState(initial?.label ?? 'Main number');
   const [wabaId, setWabaId] = useState(initial?.wabaId ?? '');
   const [phoneNumberId, setPhoneNumberId] = useState(initial?.phoneNumberId ?? '');
   const [displayNumber, setDisplayNumber] = useState(initial?.displayNumber ?? '');
@@ -282,7 +282,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
       ) : (
         <div className="sos-banner sos-banner--info" style={{ fontSize: 12.5 }}>
           Paste these from <strong>Meta Business Manager → WhatsApp Manager → API Setup</strong>.
-          Tashfeen will encrypt the access token (AES-256-GCM), save it, then immediately ping
+          The CRM will encrypt the access token (AES-256-GCM), save it, then immediately ping
           the Meta Graph API with it. If Meta accepts the call the integration goes live; if
           not we'll show you exactly what Meta returned.
         </div>
@@ -299,7 +299,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
           <FormInput
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. Tashfeen Main"
+            placeholder="e.g. Main number"
           />
         </Field>
 
@@ -604,7 +604,7 @@ export default function IntegrationsSettingsPage() {
         <ShieldCheck size={14} style={{ flexShrink: 0, marginTop: 2 }} />
         <span>
           <strong>This page (Integrations)</strong> is for initial setup and credential rotation —
-          everything Tashfeen needs to talk to Meta lives here.{' '}
+          everything the CRM needs to talk to Meta lives here.{' '}
           <strong>
             <Link
               href={'/admin/settings/whatsapp/channels' as Route}

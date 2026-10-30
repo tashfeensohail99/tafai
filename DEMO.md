@@ -69,7 +69,7 @@ No secrets in this file. Values live in the Railway service variables.
 | `DEMO_LIVE_PHONE_NUMBER_IDS` | Comma list of Meta `phone_number_id`s allowed to send (the live lane). Everything else is blocked even in demo. |
 | `DEMO_LIVE_DISPLAY_NUMBER` | The demo number as shown to prospects (banner text). |
 | `BRAND_NAME`, `BRAND_SHORT_NAME` | Brand used by the AI prompts / WhatsApp copy (e.g. "Summit Immigration Consultants"). |
-| `DEMO_LOGIN_DOMAIN` | Domain of the demo logins (`demo.admin@…`, `demo.agent@…`). |
+| `DEMO_LOGIN_DOMAIN` | Domain of the demo logins (`admin@…`, `sales@…`; default domain `summit.demo`). |
 | `DEMO_ADMIN_PASSWORD`, `DEMO_AGENT_PASSWORD` | Only needed when running `demo:seed`. |
 | `DEMO_OPENAI_API_KEY` | Only for `demo:seed`: stored encrypted in the demo DB as the active OpenAI key. |
 | `DEMO_LIVE_WABA_ID`, `DEMO_LIVE_PHONE_NUMBER_ID`, `DEMO_LIVE_ACCESS_TOKEN`, `DEMO_LIVE_DISPLAY_NUMBER` | Only for `demo:seed`: creates the live-lane channel row. |
@@ -206,17 +206,17 @@ password = `DEMO_<KEY>_PASSWORD` if set, else the seed default):
 
 | Email | Role | Workspace |
 |---|---|---|
-| `demo.admin@…` | super_admin | /admin (everything) |
-| `demo.manager@…` | admin | /admin |
-| `demo.agent@…` | sales | /sales (inbox, leads, follow-ups) — ~10% of assigned leads route here |
-| `demo.finance@…` | finance | /finance |
-| `demo.processing@…` | processing | /processing |
-| `demo.processing.manager@…` | processing_manager | /processing |
-| `demo.documentation@…` | documentation | /processing |
-| `demo.reception@…` | reception | /reception |
-| `demo.marketing@…` | marketing | /marketing |
-| `demo.hr@…` | hr | /hr |
-| `demo.jr@…` | jr_head | /jr |
+| `admin@…` | super_admin | /admin (everything) |
+| `manager@…` | admin | /admin |
+| `sales@…` | sales | /sales (inbox, leads, follow-ups) — ~10% of assigned leads route here |
+| `finance@…` | finance | /finance |
+| `processing@…` | processing | /processing |
+| `processing.manager@…` | processing_manager | /processing |
+| `documentation@…` | documentation | /processing |
+| `reception@…` | reception | /reception |
+| `marketing@…` | marketing | /marketing |
+| `hr@…` | hr | /hr |
+| `jr@…` | jr_head | /jr |
 * Per-prospect links: `/admin/settings/demo` → *New prospect link* (role,
   validity in hours, optional max uses). The link
   `https://demo.<domain>/demo/enter?t=…` signs the visitor straight in; every

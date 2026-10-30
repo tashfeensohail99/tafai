@@ -23,7 +23,7 @@ INBOX_SHOT = sys.argv[2] if len(sys.argv) > 2 and os.path.exists(sys.argv[2]) el
 
 DEMO_URL = 'https://demo.summitautomates.com'
 FALLBACK_URL = 'https://frontend-production-488d.up.railway.app'
-DOMAIN = 'summit-demo.example'
+DOMAIN = 'summit.demo'
 
 NAVY = colors.HexColor('#0f172a')
 ACCENT = colors.HexColor('#4f46e5')
@@ -155,20 +155,20 @@ story += bullets([
     'Have this guide\'s walkthrough page (page 6) next to you.',
 ])
 story.append(Paragraph('Logins', H2))
-story.append(Paragraph(f'All logins end in <b>@{DOMAIN}</b>. Passwords are case-sensitive.', P))
+story.append(Paragraph(f'Every login ends in <b>@{DOMAIN}</b> and every one uses the same password: <b>Summit2026!</b> (capital S, exclamation mark at the end).', P))
 logins = [
     ['Login (email)', 'Password', 'What it opens', 'Use it for'],
-    [f'demo.admin@{DOMAIN}', 'Summit-Demo-2026!', 'Admin — everything', 'Main demo login'],
-    [f'demo.agent@{DOMAIN}', 'Summit-Agent-2026!', 'Sales agent workspace', 'Second tab: the rep\'s view'],
-    [f'demo.manager@{DOMAIN}', 'Summit-Manager-2026!', 'Admin (non-super)', 'Manager questions'],
-    [f'demo.finance@{DOMAIN}', 'Summit-Finance-2026!', 'Finance', 'Receipts, contracts, approvals'],
-    [f'demo.processing@{DOMAIN}', 'Summit-Processing-2026!', 'Processing', 'Case pipeline, documents'],
-    [f'demo.processing.manager@{DOMAIN}', 'Summit-ProcessingManager-2026!', 'Processing (manager)', 'Case oversight'],
-    [f'demo.documentation@{DOMAIN}', 'Summit-Documentation-2026!', 'Processing (documents)', 'Document checklists'],
-    [f'demo.reception@{DOMAIN}', 'Summit-Reception-2026!', 'Reception', 'Walk-ins, consultation fees'],
-    [f'demo.marketing@{DOMAIN}', 'Summit-Marketing-2026!', 'Marketing', 'Meta ads, campaigns, conversions'],
-    [f'demo.hr@{DOMAIN}', 'Summit-HR-2026!', 'HR', 'Team directory, onboarding'],
-    [f'demo.jr@{DOMAIN}', 'Summit-Legal-2026!', 'Judicial Review', 'Legal caseload (Canada)'],
+    [f'admin@{DOMAIN}', 'Summit2026!', 'Admin — everything', 'Main demo login'],
+    [f'sales@{DOMAIN}', 'Summit2026!', 'Sales agent workspace', 'Second tab: the rep\'s view'],
+    [f'manager@{DOMAIN}', 'Summit2026!', 'Admin (non-super)', 'Manager questions'],
+    [f'finance@{DOMAIN}', 'Summit2026!', 'Finance', 'Receipts, contracts, approvals'],
+    [f'processing@{DOMAIN}', 'Summit2026!', 'Processing', 'Case pipeline, documents'],
+    [f'processing.manager@{DOMAIN}', 'Summit2026!', 'Processing (manager)', 'Case oversight'],
+    [f'documentation@{DOMAIN}', 'Summit2026!', 'Processing (documents)', 'Document checklists'],
+    [f'reception@{DOMAIN}', 'Summit2026!', 'Reception', 'Walk-ins, consultation fees'],
+    [f'marketing@{DOMAIN}', 'Summit2026!', 'Marketing', 'Meta ads, campaigns, conversions'],
+    [f'hr@{DOMAIN}', 'Summit2026!', 'HR', 'Team directory, onboarding'],
+    [f'jr@{DOMAIN}', 'Summit2026!', 'Judicial Review', 'Legal caseload (Canada)'],
 ]
 story.append(table(logins, [58 * mm, 46 * mm, 34 * mm, 32 * mm], font=8.6))
 story += callout('Do not share these passwords with prospects. To let a prospect try the demo themselves, give them a personal link (section 5), which expires on its own.', label='Important')
@@ -200,7 +200,7 @@ story.append(PageBreak())
 # ───────────────────────────── 4. the walkthrough ─────────────────────────────
 story.append(Paragraph('4. The 12-minute walkthrough', H1))
 story.append(Paragraph('Keep this page open during the call. Each step has what to click, what the client will see, and a sentence you can say word for word.', P))
-story.append(step(1, 'Open the door (1 min)', 'Log in as demo.admin. Stay on the Dashboard.',
+story.append(step(1, 'Open the door (1 min)', 'Log in as admin@summit.demo. Stay on the Dashboard.',
                   'A dashboard with today\'s leads, conversations, appointments and money; a yellow strip saying “Demo environment — sample data”.',
                   'This is a live copy of a working immigration CRM. Names and numbers are replaced, everything else is real: the volume, the conversations, the way the AI works.'))
 story.append(step(2, 'The inbox (2 min)', 'Sidebar → WhatsApp → Chats. Scroll slowly. Click the “Unread” and “Uncontacted” filters at the top of the list.',
@@ -218,7 +218,7 @@ story.append(step(5, 'The lead behind the chat (1 min)', 'Click the customer\'s 
 story.append(step(6, 'The manager\'s view (2 min)', 'Sidebar → Sales overview, then Settings → WhatsApp Team.',
                   'Per-agent numbers, who is online, response-time scores; the inbox rota and working hours.',
                   'You decide who receives new leads, how fast they must answer, and you see every morning who kept the promise.'))
-story.append(step(7, 'The rep\'s view (1 min)', 'Switch to the second tab (demo.agent) and open WhatsApp Inbox.',
+story.append(step(7, 'The rep\'s view (1 min)', 'Switch to the second tab (sales@summit.demo) and open WhatsApp Inbox.',
                   'A simpler screen: only this agent\'s conversations, follow-ups due today, their own numbers.',
                   'Your salespeople see only what is theirs. Simple on purpose.'))
 story.append(step(8, 'Close (1 min)', 'Go back to the admin tab, Sidebar → Leads, filter by a source. Then stop sharing.',
@@ -231,7 +231,7 @@ story.append(PageBreak())
 story.append(Paragraph('5. Letting a prospect try it themselves', H1))
 story.append(Paragraph('You can give a prospect a personal link that logs them straight in, without a password, for a limited time.', P))
 story += bullets([
-    'Log in as demo.admin and open <b>/admin/settings/demo</b> (type it after the demo address in the browser).',
+    'Log in as admin@summit.demo and open <b>/admin/settings/demo</b> (type it after the demo address in the browser).',
     'Under “New prospect link”, enter a label (company and person, e.g. “Acme Immigration — Ahmed”), choose <b>Demo admin</b> (everything) or <b>Demo sales agent</b>, set how many hours it stays valid (48 is the default) and click <b>Create link</b>.',
     'Copy the link immediately — it is shown once. Send it to the prospect.',
     'The same page shows when each link was opened and from where. Click <b>Revoke</b> to switch a link off early.',

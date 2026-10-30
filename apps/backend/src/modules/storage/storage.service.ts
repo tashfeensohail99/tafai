@@ -54,8 +54,26 @@ export function isNoSuchUploadError(error: unknown): boolean {
   return e.name === 'NoSuchUpload' || e.Code === 'NoSuchUpload';
 }
 
+/** Thrown by download() when the object is gone; callers can regenerate derived files (PDFs). */
+export class StorageObjectMissingError extends Error {
+  constructor(public readonly key: string) {
+    super(`Storage object not found: ${key}`);
+    this.name = 'StorageObjectMissingError';
+  }
+}
+
 @Injectable()
 export class StorageService {
+  /**
+   * LOCAL mode keeps objects in memory (bounded) instead of dropping them, so
+   * generated files — receipt / agreement PDFs — can be read back and served
+   * in dev and in the demo environment, which has no bucket on purpose.
+   */
+  private static readonly LOCAL_MAX_OBJECTS = 500;
+  private static readonly LOCAL_MAX_BYTES = 64 * 1024 * 1024;
+  private readonly localObjects = new Map<string, { bytes: Buffer; mimeType: string }>();
+  private localBytes = 0;
+
   private readonly logger = new Logger(StorageService.name);
   private readonly s3: S3Client;
   private readonly bucket: string;
@@ -538,7 +556,8 @@ export class StorageService {
     mimeType: string,
   ): Promise<UploadResult> {
     if (this.mode === 'local') {
-      this.logger.log(`[LOCAL] Skipped upload, stub key: ${key}`);
+      this.localPut(key, buffer, mimeType);
+      this.logger.log(`[LOCAL] Stored in memory: ${key} (${buffer.length} bytes)`);
       return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };
     }
 
@@ -625,7 +644,9 @@ export class StorageService {
    */
   async download(key: string): Promise<{ bytes: Buffer; mimeType: string | null }> {
     if (this.mode === 'local') {
-      throw new Error(`[LOCAL] download not supported (key: ${key})`);
+      const obj = this.localObjects.get(key);
+      if (!obj) throw new StorageObjectMissingError(key);
+      return { bytes: obj.bytes, mimeType: obj.mimeType };
     }
 
     if (this.mode === 'supabase') {
@@ -654,7 +675,11 @@ export class StorageService {
 
   async delete(key: string): Promise<void> {
     if (this.mode === 'local') {
-      this.logger.log(`[LOCAL] Skipped delete: ${key}`);
+      const obj = this.localObjects.get(key);
+      if (obj) {
+        this.localObjects.delete(key);
+        this.localBytes -= obj.bytes.length;
+      }
       return;
     }
 
@@ -691,6 +716,26 @@ export class StorageService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private localPut(key: string, buffer: Buffer, mimeType: string): void {
+    const prev = this.localObjects.get(key);
+    if (prev) {
+      this.localObjects.delete(key);
+      this.localBytes -= prev.bytes.length;
+    }
+    this.localObjects.set(key, { bytes: buffer, mimeType });
+    this.localBytes += buffer.length;
+    // Evict oldest-first until within bounds (Map preserves insertion order).
+    while (
+      this.localObjects.size > 1 &&
+      (this.localObjects.size > StorageService.LOCAL_MAX_OBJECTS || this.localBytes > StorageService.LOCAL_MAX_BYTES)
+    ) {
+      const oldest = this.localObjects.keys().next().value as string;
+      const o = this.localObjects.get(oldest);
+      this.localObjects.delete(oldest);
+      if (o) this.localBytes -= o.bytes.length;
     }
   }
 

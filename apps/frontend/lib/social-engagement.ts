@@ -84,6 +84,34 @@ export interface SocialStatus {
   pages: { pageId: string; name: string; hasInstagram: boolean; igUsername?: string }[];
 }
 
+export interface MyHandleStatus {
+  isEmployee: boolean;
+  submitted: boolean;
+  hasInstagram: boolean;
+  name?: string;
+  instagram?: string | null;
+  facebookUrl?: string | null;
+  linkedinUrl?: string | null;
+  tiktok?: string | null;
+  youtube?: string | null;
+}
+
+/** Current logged-in employee's submission status (for the in-app prompt). */
+export function getMyHandleStatus(): Promise<MyHandleStatus> {
+  return apiFetch<MyHandleStatus>('/social-engagement/me/handle-status', { cache: 'no-store' });
+}
+
+/** Submit the logged-in employee's own handles (identity from the session). */
+export function submitMyHandles(body: {
+  instagram: string;
+  facebookUrl?: string;
+  linkedinUrl?: string;
+  tiktok?: string;
+  youtube?: string;
+}): Promise<{ ok: boolean }> {
+  return apiFetch('/social-engagement/me/handles', { method: 'POST', body: JSON.stringify(body) });
+}
+
 const BASE = '/admin/social-engagement';
 
 export function getScoreboard(days = 7): Promise<Scoreboard> {

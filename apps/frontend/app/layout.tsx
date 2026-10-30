@@ -3,6 +3,7 @@ import '../styles/globals.css';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { BackendWarmup } from '@/components/layout/BackendWarmup';
 import { UploadDockHost } from '@/components/databank/UploadDockHost';
+import { SocialHandlePrompt } from '@/components/layout/SocialHandlePrompt';
 
 export const metadata = {
   title: 'Tashfeen – Immigration Solutions',
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ThemeProvider>
           <BackendWarmup />
           <UploadDockHost />
+          <SocialHandlePrompt />
           {children}
         </ThemeProvider>
       </body>

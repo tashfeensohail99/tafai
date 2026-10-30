@@ -382,6 +382,34 @@ doc.addPageTemplates([
 ])
 
 
+def table(rows, widths, font=9.4):
+    cell = ParagraphStyle('cell', parent=P, fontSize=font, leading=font + 3.6, spaceAfter=0)
+    head = ParagraphStyle('head', parent=cell, fontName='Helvetica-Bold', textColor=INK)
+    data = [[Paragraph(str(c), head if r == 0 else cell) for c in row] for r, row in enumerate(rows)]
+    t = Table(data, colWidths=widths, repeatRows=1)
+    style = [
+        ('BACKGROUND', (0, 0), (-1, 0), TINT),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.8, INDIGO),
+        ('LINEBELOW', (0, 1), (-1, -1), 0.4, LINE),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]
+    for r in range(2, len(rows), 2):
+        style.append(('BACKGROUND', (0, r), (-1, r), SOFT))
+    t.setStyle(TableStyle(style))
+    return t
+
+
+def fill_lines(rows, label_w=58 * mm, dark=False):
+    lab = SMALLW if dark else SMALL
+    body = DARK_B if dark else P
+    t = Table([[Paragraph(k, lab), Paragraph(v, body)] for k, v in rows], colWidths=[label_w, CW - label_w], rowHeights=[11 * mm] * len(rows))
+    t.setStyle(TableStyle([('LINEBELOW', (1, 0), (1, -1), 0.6, colors.HexColor('#475569') if dark else colors.HexColor('#94a3b8')),
+                           ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
+    return t
+
+
 def bullets(items, style=BUL):
     return [Paragraph(f'<font color="#4f46e5">●</font>&nbsp; {t}', style) for t in items]
 
@@ -461,6 +489,28 @@ story.append(Callout('<b>Your data.</b> Your records live in your own cloud data
                      'Every sensitive action — document views, payment verification, exports — is logged with who did it and when. '
                      'The demo you saw runs on sample data: a real system\'s history with every name, number and document replaced by realistic substitutes.',
                      col=INDIGO, bg=TINT))
+story.append(PageBreak())
+
+# ───────────── running costs ─────────────
+story.append(Section('Transparent pricing', 'Running costs'))
+story.append(Paragraph('Summit is a subscription. Hosting, backups, updates and support are part of it — there are no servers to buy or maintain. '
+                       'The only costs that vary with your volume are the ones below, and each is billed at cost with no mark-up.', LEAD))
+story.append(table([
+    ['What', 'What it covers', 'Typical cost'],
+    ['Summit subscription', 'The platform for your whole team: inbox, AI assistant, leads, appointments, agreements, finance, processing, reports, mobile app. Hosting in Summit’s cloud, daily backups, updates and support included.', 'Fixed monthly fee per office — quoted on your call (see below).'],
+    ['WhatsApp messaging (Meta)', 'Meta charges per message on the WhatsApp Business Platform. Customer-initiated chats (the bulk of an immigration office’s traffic) come with a monthly free allowance per number; business-initiated reminders and marketing broadcasts are charged per message.', 'Pakistan rate card, approx.: service/utility messages US$ 0.01–0.015 each after the first 1,000 free per number per month; marketing broadcasts about US$ 0.047 each. Set by Meta and subject to change.'],
+    ['AI assistant usage', 'Language-model usage for the replies, transcripts and summaries the assistant produces. Usage-based and billed at cost.', 'A full conversation handled by the assistant typically costs a few US cents or less.'],
+    ['Meta advertising (optional)', 'Your own click-to-WhatsApp and lead-form ad spend. Summit tracks cost per lead per ad; it does not charge on top.', 'Your ad budget — unchanged.'],
+    ['One-time setup', 'Number connection, assistant knowledge base, lead import, team training.', 'Quoted on your call (see below).'],
+], [36 * mm, 76 * mm, 58 * mm], font=8.9))
+story.append(Spacer(1, 5 * mm))
+story.append(Callout('<b>How to read the WhatsApp line.</b> Most of an office’s messages are replies to customers who wrote first, which is where the free allowance applies. '
+                     'Reminders and follow-ups the system sends on its own (appointment reminders, re-engagement of old leads) are the per-message items. '
+                     'We estimate your monthly Meta cost from your real volume during the kick-off call. Meta publishes the current rates at business.whatsapp.com.',
+                     col=AMBER, bg=colors.HexColor('#fffbeb')))
+story.append(Spacer(1, 6 * mm))
+story.append(Paragraph('YOUR QUOTE', EYEBROW_D))
+story.append(fill_lines([('Summit subscription / month', ''), ('One-time setup', ''), ('Included users and WhatsApp numbers', '')]))
 story.append(PageBreak())
 
 # ───────────── getting started ─────────────

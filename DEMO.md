@@ -202,7 +202,7 @@ prospect's phone to the test number's recipient list** (step 6 below).
 ## 5. Demo logins and prospect links
 
 One login per role (all `@<DEMO_LOGIN_DOMAIN>`, created by `demo:seed`;
-password = `DEMO_<KEY>_PASSWORD` if set, else the seed default):
+password = `DEMO_<KEY>_PASSWORD` if set, else `Summit2026!` for every account):
 
 | Email | Role | Workspace |
 |---|---|---|

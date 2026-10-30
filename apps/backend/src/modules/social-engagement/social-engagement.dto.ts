@@ -49,6 +49,33 @@ export class UpdateHandleDto {
 
 /** Fields posted by the public self-submit form. Accepts a handle OR a URL;
  *  normalised + validated per platform server-side. Instagram is required. */
+/** Logged-in employee submitting their own handles (identity from the JWT). */
+export class SelfHandlesDto {
+  @IsString()
+  @MaxLength(300)
+  instagram!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  facebookUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  linkedinUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  tiktok?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  youtube?: string;
+}
+
 export class PublicIntakeDto {
   // Name + phone identify the employee (the shared link carries no token).
   @IsString()

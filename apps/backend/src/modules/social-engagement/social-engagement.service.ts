@@ -115,6 +115,61 @@ export class SocialEngagementService {
   }
 
   // ---------------------------------------------------------------------------
+  // Authenticated self-service — for the in-app "register your handles" popup.
+  // The logged-in user IS the employee, so no name/phone needed.
+  // ---------------------------------------------------------------------------
+
+  /** Current user's submission status + prefill, for the in-app prompt. */
+  async myHandleStatus(userId: string) {
+    const e = await this.prisma.employee.findFirst({
+      where: { userId, deletedAt: null },
+      select: {
+        firstName: true, lastName: true,
+        instagramHandle: true, facebookProfileUrl: true, linkedinUrl: true,
+        tiktokHandle: true, youtubeChannelUrl: true, socialHandlesSubmittedAt: true,
+      },
+    });
+    if (!e) return { isEmployee: false as const, submitted: false, hasInstagram: false };
+    return {
+      isEmployee: true as const,
+      submitted: !!e.socialHandlesSubmittedAt,
+      hasInstagram: !!e.instagramHandle,
+      name: `${e.firstName} ${e.lastName}`.trim(),
+      instagram: e.instagramHandle,
+      facebookUrl: e.facebookProfileUrl,
+      linkedinUrl: e.linkedinUrl,
+      tiktok: e.tiktokHandle,
+      youtube: e.youtubeChannelUrl,
+    };
+  }
+
+  /** Upsert the logged-in employee's own handles (IG required). */
+  async submitMyHandles(userId: string, dto: { instagram: string; facebookUrl?: string; linkedinUrl?: string; tiktok?: string; youtube?: string }) {
+    const employee = await this.prisma.employee.findFirst({ where: { userId, deletedAt: null }, select: { id: true } });
+    if (!employee) throw new NotFoundException('Your account is not linked to an employee record — please contact admin.');
+
+    const ig = normalizeSocial('instagram', dto.instagram);
+    if (!ig) throw new BadRequestException('Instagram username is required.');
+    const fb = normalizeSocial('facebook', dto.facebookUrl);
+    const li = normalizeSocial('linkedin', dto.linkedinUrl);
+    const tt = normalizeSocial('tiktok', dto.tiktok);
+    const yt = normalizeSocial('youtube', dto.youtube);
+
+    await this.prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        instagramHandle: ig.handle ?? null,
+        facebookProfileUrl: fb?.url ?? null,
+        linkedinUrl: li?.url ?? null,
+        tiktokHandle: tt?.handle ?? null,
+        youtubeChannelUrl: yt?.url ?? null,
+        socialHandlesSubmittedAt: new Date(),
+      },
+    });
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------------------------------
   // Public self-submit intake — ONE shared link, no login. Employees identify
   // themselves by NAME + PHONE (matched against the staff directory). No
   // per-employee links, no roster exposed. Email is avoided because staff have

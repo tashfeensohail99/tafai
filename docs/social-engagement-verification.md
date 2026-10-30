@@ -124,6 +124,10 @@ So the registry can be populated at scale, there is **one shared link** sent to 
 - **Platforms collected:** Instagram (required), Facebook, LinkedIn, TikTok, **YouTube**. YouTube is *collection only* for now. A future phase can **verify** YouTube engagement — the YouTube Data API exposes the commenter's channel identity on our own videos, so YT is verifiable like IG (unlike FB, which stays text-only); that phase needs the YT Data API + Google OAuth and is out of scope here.
 - **Admin monitor:** the **Social Handles** page shows the one shared link (copy / open), per-rep submission timestamp, an **Open ↗** link per platform, who's still missing an IG handle, and a per-row **Edit** modal.
 
+### In-app prompt (web)
+
+A dismissible popup (`SocialHandlePrompt`, mounted once in the root layout) shows to any **logged-in** employee who hasn't submitted yet, and lets them fill their handles **inline** — identity comes from their session, so no name/phone needed. Authenticated endpoints `GET /social-engagement/me/handle-status` + `POST /social-engagement/me/handles` (JWT only, no permission — every employee is prompted). Hidden on the public form + auth pages; "Remind me later" snoozes it 24h (localStorage). Mobile-app equivalent (a launch dialog) is a later Flutter/Shorebird patch.
+
 ## 8. Later phases (not in this PR)
 
 - **Rep self-service** claim entry in the sales shell + the Flutter mobile app

@@ -92,6 +92,7 @@ export function SocialHandlePrompt() {
   return (
     <div style={overlay} role="dialog" aria-modal="true">
       <div style={modal}>
+        <button type="button" onClick={snooze} aria-label="Close" title="Close" style={closeBtn}>×</button>
         {done ? (
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 40 }}>✅</div>
@@ -119,7 +120,7 @@ export function SocialHandlePrompt() {
 
             {error ? <div style={{ color: '#b91c1c', fontSize: 13, margin: '2px 0 10px' }}>{error}</div> : null}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-              <button type="button" onClick={snooze} style={btnGhost}>Remind me later</button>
+              <button type="button" onClick={snooze} style={btnGhost}>Continue later</button>
               <button type="button" onClick={submit} disabled={busy || !instagram.trim()} style={{ ...btnPrimary, opacity: busy || !instagram.trim() ? 0.6 : 1 }}>
                 {busy ? 'Saving…' : 'Submit'}
               </button>
@@ -170,7 +171,8 @@ const overlay: React.CSSProperties = {
 };
 const modal: React.CSSProperties = {
   background: 'var(--sos-surface, #fff)', borderRadius: 16, padding: 22, width: '100%', maxWidth: 440,
-  maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+  maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.35)', position: 'relative',
 };
 const btnPrimary: React.CSSProperties = { padding: '9px 16px', borderRadius: 10, border: 'none', background: '#2563eb', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' };
 const btnGhost: React.CSSProperties = { padding: '9px 14px', borderRadius: 10, border: '1px solid var(--sos-border-subtle, #cbd5e1)', background: 'transparent', color: 'var(--sos-text-secondary, #475569)', fontSize: 14, cursor: 'pointer' };
+const closeBtn: React.CSSProperties = { position: 'absolute', top: 10, right: 10, width: 32, height: 32, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--sos-text-secondary, #475569)', fontSize: 24, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' };

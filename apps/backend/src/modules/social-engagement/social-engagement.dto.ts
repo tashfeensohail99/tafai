@@ -1,17 +1,20 @@
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { SocialEngagementStatus, SocialPlatform } from '@prisma/client';
 
-/** Step 1 of the shared public form: identify the employee by name + phone. */
-export class LookupByIdentityDto {
+/** Step 1 of the shared public form: search your name in the staff directory. */
+export class IntakeSearchDto {
   @IsString()
   @MinLength(2)
   @MaxLength(120)
-  name!: string;
+  q!: string;
+}
 
+/** Step 2: the opaque signed token returned for the picked name. */
+export class IntakePickDto {
   @IsString()
-  @MinLength(7)
-  @MaxLength(30)
-  phone!: string;
+  @MinLength(8)
+  @MaxLength(400)
+  pickToken!: string;
 }
 
 export class UpdateHandleDto {
@@ -77,16 +80,11 @@ export class SelfHandlesDto {
 }
 
 export class PublicIntakeDto {
-  // Name + phone identify the employee (the shared link carries no token).
+  // The picked employee's opaque signed token (from the name search).
   @IsString()
-  @MinLength(2)
-  @MaxLength(120)
-  name!: string;
-
-  @IsString()
-  @MinLength(7)
-  @MaxLength(30)
-  phone!: string;
+  @MinLength(8)
+  @MaxLength(400)
+  pickToken!: string;
 
   @IsString()
   @MaxLength(300)

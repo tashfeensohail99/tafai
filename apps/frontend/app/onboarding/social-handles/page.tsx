@@ -1,21 +1,28 @@
 'use client';
 
-import { useState } from 'react';
-import { lookupByIdentity, submitByIdentity, previewUrl, type SocialField } from '@/lib/public-social-handles';
+import { useEffect, useRef, useState } from 'react';
+import { searchStaff, prefillByPick, submitByPick, previewUrl, type SocialField, type StaffMatch } from '@/lib/public-social-handles';
 
 const NAVY = '#0f2a4a';
 const BLUE = '#2563eb';
 const BG = '#f4f6fb';
 
-type Step = 'email' | 'form' | 'done';
+type Step = 'find' | 'form' | 'done';
 
 export default function SocialHandleIntakePage() {
-  const [step, setStep] = useState<Step>('email');
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [step, setStep] = useState<Step>('find');
+
+  // Step 1 — name search
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<StaffMatch[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Step 2 — chosen person + handles
+  const [pickToken, setPickToken] = useState('');
   const [matchedName, setMatchedName] = useState('');
   const [resubmitting, setResubmitting] = useState(false);
-
   const [instagram, setInstagram] = useState('');
   const [facebook, setFacebook] = useState('');
   const [linkedin, setLinkedin] = useState('');
@@ -25,25 +32,41 @@ export default function SocialHandleIntakePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function findMe() {
+  // Debounced live search as they type.
+  useEffect(() => {
+    if (debounce.current) clearTimeout(debounce.current);
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      setSearched(false);
+      return;
+    }
+    setSearching(true);
+    debounce.current = setTimeout(() => {
+      searchStaff(q)
+        .then((r) => setResults(r))
+        .catch(() => setResults([]))
+        .finally(() => { setSearching(false); setSearched(true); });
+    }, 300);
+    return () => { if (debounce.current) clearTimeout(debounce.current); };
+  }, [query]);
+
+  async function pick(m: StaffMatch) {
     setBusy(true);
     setError(null);
     try {
-      const r = await lookupByIdentity(name.trim(), phone.trim());
-      if (!r.found) {
-        setError('We couldn’t match that name and phone number. Please use the name and company number on file, or contact admin.');
-        return;
-      }
-      setMatchedName(r.name ?? '');
-      setResubmitting(!!r.submittedAt);
-      setInstagram(r.instagram ?? '');
-      setFacebook(r.facebookUrl ?? '');
-      setLinkedin(r.linkedinUrl ?? '');
-      setTiktok(r.tiktok ?? '');
-      setYoutube(r.youtube ?? '');
+      const p = await prefillByPick(m.token);
+      setPickToken(m.token);
+      setMatchedName(p.name);
+      setResubmitting(!!p.submittedAt);
+      setInstagram(p.instagram ?? '');
+      setFacebook(p.facebookUrl ?? '');
+      setLinkedin(p.linkedinUrl ?? '');
+      setTiktok(p.tiktok ?? '');
+      setYoutube(p.youtube ?? '');
       setStep('form');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not look up that email.');
+      setError(e instanceof Error ? e.message : 'Could not load your record.');
     } finally {
       setBusy(false);
     }
@@ -53,9 +76,8 @@ export default function SocialHandleIntakePage() {
     setBusy(true);
     setError(null);
     try {
-      await submitByIdentity({
-        name: name.trim(),
-        phone: phone.trim(),
+      await submitByPick({
+        pickToken,
         instagram: instagram.trim(),
         facebookUrl: facebook.trim() || undefined,
         linkedinUrl: linkedin.trim() || undefined,
@@ -78,53 +100,47 @@ export default function SocialHandleIntakePage() {
           <div style={{ fontSize: 13, color: '#64748b' }}>Team social profiles</div>
         </div>
 
-        {step === 'email' ? (
+        {step === 'find' ? (
           <Card>
-            <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Register your social profiles</h2>
-            <p style={{ color: '#475569', fontSize: 13.5, lineHeight: 1.55, margin: '0 0 16px' }}>
-              Enter your <strong>full name</strong> and your <strong>company phone number</strong> so we can match you to your staff record.
+            <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Find your name</h2>
+            <p style={{ color: '#475569', fontSize: 13.5, lineHeight: 1.55, margin: '0 0 14px' }}>
+              Start typing your name and pick yourself from the list.
             </p>
-            <div style={{ marginBottom: 12 }}>
-              <label style={labelStyle}>Full name</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Ayesha Khan"
-                autoCapitalize="words"
-                style={inputStyle(false)}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Company phone number</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && phone.trim()) void findMe(); }}
-                placeholder="e.g. 0300 1234567"
-                inputMode="tel"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                style={inputStyle(false)}
-              />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Type your name…"
+              autoFocus
+              autoCapitalize="words"
+              style={inputStyle(false)}
+            />
+            <div style={{ marginTop: 10 }}>
+              {searching ? (
+                <p style={{ fontSize: 13, color: '#94a3b8', margin: '6px 2px' }}>Searching…</p>
+              ) : query.trim().length >= 2 && searched && results.length === 0 ? (
+                <p style={{ fontSize: 13, color: '#b45309', margin: '6px 2px' }}>
+                  No match. Try a shorter spelling or your first name only — if you still can&apos;t find yourself, contact admin.
+                </p>
+              ) : (
+                results.map((m) => (
+                  <button key={m.token} type="button" onClick={() => pick(m)} disabled={busy} style={resultRow}>
+                    <span>
+                      <span style={{ fontWeight: 600 }}>{m.name}</span>
+                      {m.hint ? <span style={{ color: '#64748b', fontSize: 12 }}> · {m.hint}</span> : null}
+                    </span>
+                    {m.submitted ? <span style={{ fontSize: 11, color: '#059669' }}>✓ submitted</span> : <span style={{ color: '#2563eb', fontSize: 13 }}>Select →</span>}
+                  </button>
+                ))
+              )}
             </div>
             {error ? <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 10 }}>{error}</div> : null}
-            <button
-              type="button"
-              onClick={findMe}
-              disabled={busy || !name.trim() || !phone.trim()}
-              style={{ ...btnPrimary, width: '100%', marginTop: 16, opacity: busy || !name.trim() || !phone.trim() ? 0.6 : 1 }}
-            >
-              {busy ? 'Checking…' : 'Continue'}
-            </button>
           </Card>
         ) : step === 'form' ? (
           <Card>
             <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Your social profiles</h2>
             <p style={{ color: '#475569', fontSize: 13.5, lineHeight: 1.55, margin: '0 0 6px' }}>
               Submitting as <strong>{matchedName}</strong>{' '}
-              <button type="button" onClick={() => { setStep('email'); setError(null); }} style={linkBtn}>(not you?)</button>
+              <button type="button" onClick={() => { setStep('find'); setError(null); }} style={linkBtn}>(not you?)</button>
             </p>
             <p style={{ color: '#64748b', fontSize: 12.5, lineHeight: 1.5, margin: '0 0 18px', background: '#eef2ff', borderRadius: 10, padding: '10px 12px' }}>
               Your <strong>Instagram username</strong> is required — it&apos;s how we recognise your comments on our posts. The rest are optional.
@@ -159,9 +175,7 @@ export default function SocialHandleIntakePage() {
           </Card>
         )}
 
-        <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11, marginTop: 16 }}>
-          Tashfeen — team engagement
-        </p>
+        <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11, marginTop: 16 }}>Tashfeen — team engagement</p>
       </div>
     </div>
   );
@@ -177,7 +191,7 @@ function HandleField({
   const malformed = value.trim().length > 0 && !preview;
   return (
     <div style={{ marginBottom: 16 }}>
-      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+      <label style={labelStyle}>
         {label}
         {required ? <span style={{ color: '#dc2626', marginLeft: 4 }}>*</span> : <span style={{ color: '#94a3b8', fontWeight: 400 }}> (optional)</span>}
       </label>
@@ -220,6 +234,11 @@ function inputStyle(bad: boolean): React.CSSProperties {
   };
 }
 
+const resultRow: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+  width: '100%', textAlign: 'left', padding: '11px 12px', marginBottom: 6, borderRadius: 10,
+  border: '1px solid #e2e8f0', background: '#fff', color: NAVY, fontSize: 14, cursor: 'pointer',
+};
 const btnPrimary: React.CSSProperties = { padding: '12px 16px', borderRadius: 10, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' };
 const btnGhost: React.CSSProperties = { padding: '9px 16px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', color: NAVY, fontSize: 14, fontWeight: 600, cursor: 'pointer' };
 const linkBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: BLUE, fontSize: 12.5, cursor: 'pointer', padding: 0 };

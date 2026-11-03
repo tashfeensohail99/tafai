@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, SocialEngagementStatus, SocialPlatform } from '@prisma/client';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { SocialGraphService, type ResolvedPage } from './social-graph.service';
@@ -170,16 +171,37 @@ export class SocialEngagementService {
   }
 
   // ---------------------------------------------------------------------------
-  // Public self-submit intake — ONE shared link, no login. Employees identify
-  // themselves by NAME + PHONE (matched against the staff directory). No
-  // per-employee links, no roster exposed. Email is avoided because staff have
-  // several (tashfeengroup.com, tashfeenimmigrationsolutions.com, workspace…).
+  // Public self-submit intake — ONE shared link, no login. Employees FIND THEIR
+  // NAME in a searchable list and pick themselves (no brittle name+phone "login"
+  // that failed on typos / missing numbers). The pick carries an opaque signed
+  // token (not a per-person link) that resolves to the employee server-side.
   // ---------------------------------------------------------------------------
 
-  /** Last 10 digits of a phone — tolerant of +92 / 0092 / 0 prefixes + spaces. */
-  private phoneKey(raw: string | null | undefined): string {
-    const digits = (raw ?? '').replace(/\D/g, '');
-    return digits.length > 10 ? digits.slice(-10) : digits;
+  /** HMAC secret for the opaque selection token. Namespaced; JWT_SECRET fallback. */
+  private pickSecret(): string {
+    return `social-handle-pick:${process.env.SOCIAL_HANDLE_FORM_SECRET || process.env.JWT_SECRET || ''}`;
+  }
+
+  private signPick(employeeId: string): string {
+    const payload = Buffer.from(employeeId, 'utf8').toString('base64url');
+    const sig = createHmac('sha256', this.pickSecret()).update(payload).digest('base64url');
+    return `${payload}.${sig}`;
+  }
+
+  private verifyPick(token: string): string {
+    const [payload, sig] = (token ?? '').split('.');
+    if (!payload || !sig) throw new BadRequestException('Please pick your name from the list again.');
+    const expected = createHmac('sha256', this.pickSecret()).update(payload).digest('base64url');
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      throw new BadRequestException('Please pick your name from the list again.');
+    }
+    try {
+      return Buffer.from(payload, 'base64url').toString('utf8');
+    } catch {
+      throw new BadRequestException('Please pick your name from the list again.');
+    }
   }
 
   private nameKey(raw: string | null | undefined): string {
@@ -187,20 +209,16 @@ export class SocialEngagementService {
   }
 
   /**
-   * Match one employee by name + phone against the active staff directory.
-   * Phone (last 10 digits) is the strong key; name disambiguates (e.g. two
-   * people who share a number is impossible, but two share a name). Returns the
-   * single match, or a reason it couldn't resolve.
+   * Search the active staff directory by name for the self-submit picker.
+   * Tolerant: each whitespace-separated term in the query must appear somewhere
+   * in the employee's full name (so word order, partials and extra spaces are
+   * fine). Returns up to 20, with a department hint to tell namesakes apart, and
+   * an opaque signed token the client sends back to prefill / submit.
    */
-  private async matchEmployee(
-    name: string,
-    phone: string,
-  ): Promise<
-    | { ok: true; employee: { id: string; firstName: string; lastName: string; instagramHandle: string | null; facebookProfileUrl: string | null; linkedinUrl: string | null; tiktokHandle: string | null; youtubeChannelUrl: string | null; socialHandlesSubmittedAt: Date | null } }
-    | { ok: false; reason: 'not_found' | 'ambiguous' }
-  > {
-    const phoneK = this.phoneKey(phone);
-    const nameK = this.nameKey(name);
+  async searchEmployeesForIntake(query: string) {
+    const q = this.nameKey(query);
+    if (q.length < 2) return { results: [] as { token: string; name: string; hint: string; submitted: boolean }[] };
+    const terms = q.split(' ').filter(Boolean);
 
     const employees = await this.prisma.employee.findMany({
       where: { deletedAt: null, isActive: true },
@@ -208,48 +226,42 @@ export class SocialEngagementService {
         id: true,
         firstName: true,
         lastName: true,
-        instagramHandle: true,
-        facebookProfileUrl: true,
-        linkedinUrl: true,
-        tiktokHandle: true,
-        youtubeChannelUrl: true,
         socialHandlesSubmittedAt: true,
-        user: { select: { phone: true } },
+        department: { select: { name: true } },
+        branch: { select: { name: true } },
       },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     });
 
-    const byPhone = phoneK.length >= 7 ? employees.filter((e) => this.phoneKey(e.user?.phone) === phoneK) : [];
-    const byName = nameK ? employees.filter((e) => this.nameKey(`${e.firstName} ${e.lastName}`) === nameK) : [];
+    const matches = employees
+      .filter((e) => {
+        const full = this.nameKey(`${e.firstName} ${e.lastName}`);
+        return terms.every((t) => full.includes(t));
+      })
+      .slice(0, 20)
+      .map((e) => ({
+        token: this.signPick(e.id),
+        name: `${e.firstName} ${e.lastName}`.trim(),
+        hint: [e.department?.name, e.branch?.name].filter(Boolean).join(' · '),
+        submitted: !!e.socialHandlesSubmittedAt,
+      }));
 
-    // Prefer the record that matches BOTH, then phone alone, then name alone.
-    const both = byPhone.filter((e) => byName.some((n) => n.id === e.id));
-    const pick =
-      both.length === 1 ? both[0]
-      : byPhone.length === 1 ? byPhone[0]
-      : byName.length === 1 ? byName[0]
-      : null;
-
-    if (!pick) {
-      const anyMatch = byPhone.length + byName.length > 0;
-      return { ok: false, reason: anyMatch ? 'ambiguous' : 'not_found' };
-    }
-    const { user: _user, ...employee } = pick;
-    return { ok: true, employee };
+    return { results: matches };
   }
 
-  private notFoundMessage(reason: 'not_found' | 'ambiguous'): string {
-    return reason === 'ambiguous'
-      ? 'We found more than one match — please check your name and phone number, or contact admin.'
-      : 'We couldn’t match that name and phone number to a team member. Use the name and company number on file, or contact admin.';
-  }
-
-  /** Step 1: confirm the name+phone maps to a team member + prefill handles. */
-  async lookupByIdentity(name: string, phone: string) {
-    const m = await this.matchEmployee(name, phone);
-    if (!m.ok) return { found: false as const };
-    const e = m.employee;
+  /** After a pick: name + any handles already on file, to prefill the form. */
+  async prefillByPick(token: string) {
+    const employeeId = this.verifyPick(token);
+    const e = await this.prisma.employee.findFirst({
+      where: { id: employeeId, deletedAt: null },
+      select: {
+        firstName: true, lastName: true,
+        instagramHandle: true, facebookProfileUrl: true, linkedinUrl: true,
+        tiktokHandle: true, youtubeChannelUrl: true, socialHandlesSubmittedAt: true,
+      },
+    });
+    if (!e) throw new NotFoundException('That staff record is no longer available — please contact admin.');
     return {
-      found: true as const,
       name: `${e.firstName} ${e.lastName}`.trim(),
       instagram: e.instagramHandle,
       facebookUrl: e.facebookProfileUrl,
@@ -260,11 +272,14 @@ export class SocialEngagementService {
     };
   }
 
-  /** Step 2: validate + normalize + upsert handles onto the matched employee. */
-  async submitByIdentity(dto: PublicIntakeDto) {
-    const m = await this.matchEmployee(dto.name, dto.phone);
-    if (!m.ok) throw new NotFoundException(this.notFoundMessage(m.reason));
-    const employee = m.employee;
+  /** Submit handles for the picked employee (identified by the signed token). */
+  async submitByPick(dto: PublicIntakeDto) {
+    const employeeId = this.verifyPick(dto.pickToken);
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!employee) throw new NotFoundException('That staff record is no longer available — please contact admin.');
 
     // Instagram is required (it's what the verification engine matches on).
     const ig = normalizeSocial('instagram', dto.instagram);

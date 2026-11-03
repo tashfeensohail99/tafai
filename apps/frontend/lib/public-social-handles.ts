@@ -1,15 +1,23 @@
 /**
  * Public (unauthenticated) API for the ONE shared employee social-handle
- * self-submit page. Employees identify themselves by NAME + PHONE. Talks
- * straight to the token-free /public/social-handles endpoints — NO auth is
- * sent. Kept separate from the authed api-client so the public page never pulls
- * in session/refresh logic.
+ * self-submit page. Employees FIND THEIR NAME in a search box and pick
+ * themselves. Talks straight to the /public/social-handles endpoints — NO auth
+ * is sent. Kept separate from the authed api-client so the public page never
+ * pulls in session/refresh logic.
  */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
-export interface LookupResult {
-  found: boolean;
-  name?: string;
+export interface StaffMatch {
+  /** Opaque signed token for this person; send it back to prefill/submit. */
+  token: string;
+  name: string;
+  /** Department · branch, to tell namesakes apart. */
+  hint: string;
+  submitted: boolean;
+}
+
+export interface Prefill {
+  name: string;
   instagram?: string | null;
   facebookUrl?: string | null;
   linkedinUrl?: string | null;
@@ -40,21 +48,32 @@ async function readError(res: Response, fallback: string): Promise<string> {
   }
 }
 
-/** Step 1: confirm name + phone maps to a team member + prefill their handles. */
-export async function lookupByIdentity(name: string, phone: string): Promise<LookupResult> {
-  const res = await fetch(`${API_BASE}/public/social-handles/lookup`, {
+/** Step 1: search the staff directory by name. */
+export async function searchStaff(q: string): Promise<StaffMatch[]> {
+  const res = await fetch(`${API_BASE}/public/social-handles/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, phone }),
+    body: JSON.stringify({ q }),
   });
-  if (!res.ok) throw new Error(await readError(res, 'Could not look you up. Please try again.'));
-  return res.json() as Promise<LookupResult>;
+  if (!res.ok) throw new Error(await readError(res, 'Search failed. Please try again.'));
+  const body = (await res.json()) as { results: StaffMatch[] };
+  return body.results ?? [];
 }
 
-/** Step 2: submit/resubmit handles for the matched employee. */
-export async function submitByIdentity(body: {
-  name: string;
-  phone: string;
+/** Step 2a: after picking, prefill name + any handles already on file. */
+export async function prefillByPick(pickToken: string): Promise<Prefill> {
+  const res = await fetch(`${API_BASE}/public/social-handles/prefill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pickToken }),
+  });
+  if (!res.ok) throw new Error(await readError(res, 'Could not load your record. Please pick your name again.'));
+  return res.json() as Promise<Prefill>;
+}
+
+/** Step 2b: submit/resubmit handles for the picked employee. */
+export async function submitByPick(body: {
+  pickToken: string;
   instagram: string;
   facebookUrl?: string;
   linkedinUrl?: string;

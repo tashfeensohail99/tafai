@@ -388,7 +388,10 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const [showJunkModal, setShowJunkModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showSendToJrModal, setShowSendToJrModal] = useState(false);
-  const isManager = user.permissions.includes('processing.case.view_all');
+  // The destructive case actions below (Mark as junk / Cancel) are manager-only.
+  // Gate on processing.case.assign — managers hold it; officers and the
+  // read-only Processing Team Lead (case.view_all only) do not.
+  const isManager = user.permissions.includes('processing.case.assign');
   const canSendToJr = user.permissions.includes('jr.matter.create');
   const canAssign = user.permissions.includes('processing.case.assign');
 

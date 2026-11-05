@@ -4091,13 +4091,15 @@ export class ProcessingService {
     });
   }
 
-  /** A user may edit/delete their own note; managers (note.view_all or
-   *  case.view_all) may manage any note. */
+  /** A user may edit/delete their own note; only holders of
+   *  processing.note.moderate (managers/admins) may manage someone else's.
+   *  NB: note.view_all grants READ of every note but NOT the right to edit or
+   *  delete others' — that distinction is what lets a Team Lead see all notes
+   *  yet touch only her own. */
   private canManageNote(noteAuthorId: string, user: RequestUser): boolean {
     return (
       noteAuthorId === user.id ||
-      user.permissions.includes('processing.note.view_all') ||
-      user.permissions.includes('processing.case.view_all')
+      user.permissions.includes('processing.note.moderate')
     );
   }
 

@@ -130,6 +130,7 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'processing.document.waive', module: 'processing', description: 'Waive a document checklist item' },
   { key: 'processing.note.create', module: 'processing', description: 'Add a processing note (internal or client-facing)' },
   { key: 'processing.note.view_all', module: 'processing', description: 'View all processing notes including internal' },
+  { key: 'processing.note.moderate', module: 'processing', description: 'Edit or delete processing notes written by other users (own notes are always editable)' },
   { key: 'processing.task.create', module: 'processing', description: 'Create a processing task' },
   { key: 'processing.communication.send', module: 'processing', description: 'Send a case communication to the client or officer' },
   { key: 'processing.checklist.manage', module: 'processing', description: 'Manage the document checklist templates' },
@@ -239,7 +240,7 @@ const SYSTEM_ROLES: {
       'processing.intake.view', 'processing.intake.acknowledge',
       'processing.case.view_all', 'processing.case.assign', 'processing.case.update_stage',
       'processing.document.request', 'processing.document.review', 'processing.document.upload', 'processing.document.waive',
-      'processing.note.create', 'processing.note.view_all',
+      'processing.note.create', 'processing.note.view_all', 'processing.note.moderate',
       'processing.task.create',
       'processing.communication.send',
       'processing.checklist.manage',
@@ -265,6 +266,21 @@ const SYSTEM_ROLES: {
       'processing.task.create',
       'processing.communication.send',
       'whatsapp.view_inbox', 'whatsapp.send_message', 'whatsapp.view_processing_scope',
+    ],
+  },
+  {
+    name: 'processing_team_lead',
+    displayName: 'Processing Team Lead',
+    description: 'Oversee the processing board — see every case, filter, and add notes; cannot reassign, change stages, upload/waive documents, or sign off',
+    permissionKeys: [
+      // Read-only visibility of the client / case / document records behind each case.
+      'clients.view_all', 'cases.view_all', 'documents.view_all',
+      // Enter the Processing module + see and filter the whole case board.
+      'processing.intake.view', 'processing.case.view_all',
+      // Read every note on any case; add notes. note.moderate is deliberately
+      // withheld, so canManageNote falls back to author-only — she can edit /
+      // delete only the notes she wrote.
+      'processing.note.view_all', 'processing.note.create',
     ],
   },
   {

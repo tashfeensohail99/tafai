@@ -226,10 +226,11 @@ export function MilestonesTab({ c }: { c: MockProcessingCase }) {
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Manager-only affordance for adding ad-hoc milestones. Server enforces
-  // this too via processing.case.assign permission on the POST route.
-  const isManager = user.permissions.includes('processing.case.assign')
-    || user.permissions.includes('processing.case.view_all');
+  // Manager-only affordance for adding ad-hoc milestones. Gate strictly on
+  // processing.case.assign — the exact permission the POST route enforces. A
+  // Processing Team Lead holds case.view_all (reads the whole board) but NOT
+  // assign, so she does not get the add-milestone form.
+  const isManager = user.permissions.includes('processing.case.assign');
 
   useEffect(() => {
     let cancelled = false;

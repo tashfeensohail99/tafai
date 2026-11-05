@@ -31,7 +31,7 @@ const ROLE = {
     'processing.intake.view', 'processing.intake.acknowledge',
     'processing.case.view_all', 'processing.case.assign', 'processing.case.update_stage',
     'processing.document.request', 'processing.document.review', 'processing.document.upload', 'processing.document.waive',
-    'processing.note.create', 'processing.note.view_all',
+    'processing.note.create', 'processing.note.view_all', 'processing.note.moderate',
     'processing.task.create',
     'processing.communication.send',
     'processing.checklist.manage',

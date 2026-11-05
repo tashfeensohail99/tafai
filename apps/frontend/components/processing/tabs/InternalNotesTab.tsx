@@ -619,7 +619,11 @@ function AddNote({ officers, onSaved, caseId }: { officers: ApiProcessingOfficer
 
 export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
   const { user } = useProcessingSession();
-  const isManager = user.permissions.includes('processing.note.view_all') || user.permissions.includes('processing.case.view_all');
+  // Only note moderators (managers/admins) may edit/delete OTHER people's notes.
+  // A Processing Team Lead has note.view_all (reads every note) but not
+  // note.moderate, so she can edit/delete only the notes she wrote — matching
+  // canManageNote on the backend.
+  const isManager = user.permissions.includes('processing.note.moderate');
 
   const [notes, setNotes] = useState<ApiProcessingNote[]>([]);
   const [officers, setOfficers] = useState<ApiProcessingOfficer[]>([]);

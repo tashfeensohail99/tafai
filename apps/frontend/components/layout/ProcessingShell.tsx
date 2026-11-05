@@ -79,6 +79,7 @@ export function useProcessingSession(): ProcessingSessionContextValue {
 const PROCESSING_ROLES = new Set([
   'processing',
   'processing_manager',
+  'processing_team_lead',
   'documentation',
   'super_admin',
   'admin',
